@@ -1,13 +1,7 @@
 -- ============================================================
---  FPS BOOSTER — Client-Side Menu (Roblox Lua)
---  Requires an executor. Built to match the HTML preview UI.
---
---  Features:
---    • Draggable window with Main / Performance / Output tabs
---    • Toggles, sliders, colored console, toasts
---    • Real optimizations: lighting, post-FX, terrain, workspace
---    • Batching + start delay to keep the client responsive
---    • Minimize / Close / Reopen chip
+--  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [FIXED v1.1]
+--  Robust UI parenting + debug output + fallbacks.
+--  Requires an executor.
 -- ============================================================
 
 -- ============================================================
@@ -17,6 +11,10 @@ if _G.__FPS_BOOSTER_INSTANCE then
     pcall(function() _G.__FPS_BOOSTER_INSTANCE:Destroy() end)
     _G.__FPS_BOOSTER_INSTANCE = nil
 end
+
+print("=========================================")
+print("[FPS Booster] Starting up…")
+print("=========================================")
 
 -- ============================================================
 -- 1. SERVICES
@@ -29,19 +27,99 @@ local RunService        = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- Resolve a safe UI parent. CoreGui usually works in executors,
--- otherwise fall back to PlayerGui.
-local function getUIParent()
-    local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
-    if ok and coreGui then
-        local ok2 = pcall(function() local _ = coreGui.Name end)
-        if ok2 then return coreGui end
+-- ============================================================
+-- 2. ROBUST UI PARENT RESOLVER
+-- ============================================================
+-- Tries, in order:
+--   1. gethui()      -- best for executors, bypasses CoreGui protection
+--   2. CoreGui       -- may be blocked on some executors
+--   3. PlayerGui     -- always available but sometimes hidden on mobile
+--   4. workspace     -- last-ditch fallback for stubborn executors
+local function resolveUIParent()
+    local attempts = {}
+
+    -- Attempt 1: gethui()
+    if type(gethui) == "function" then
+        local ok, hui = pcall(gethui)
+        if ok and hui then
+            local usable = pcall(function() local _ = hui.Name end)
+            if usable then
+                print("[FPS Booster] UI parent: gethui() ✓")
+                return hui, "gethui"
+            else
+                table.insert(attempts, "gethui() returned unusable instance")
+            end
+        else
+            table.insert(attempts, "gethui() call failed: " .. tostring(hui))
+        end
+    else
+        table.insert(attempts, "gethui is not a function")
     end
-    return LocalPlayer:WaitForChild("PlayerGui")
+
+    -- Attempt 2: CoreGui
+    do
+        local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
+        if ok and coreGui then
+            local nameOk, nameErr = pcall(function() return coreGui.Name end)
+            if nameOk then
+                print("[FPS Booster] UI parent: CoreGui ✓")
+                return coreGui, "CoreGui"
+            else
+                table.insert(attempts, "CoreGui blocked: " .. tostring(nameErr))
+            end
+        else
+            table.insert(attempts, "CoreGui service unreachable")
+        end
+    end
+
+    -- Attempt 3: PlayerGui
+    if LocalPlayer then
+        local ok, playerGui = pcall(function()
+            return LocalPlayer:WaitForChild("PlayerGui", 5)
+        end)
+        if ok and playerGui then
+            print("[FPS Booster] UI parent: PlayerGui ✓")
+            return playerGui, "PlayerGui"
+        else
+            table.insert(attempts, "PlayerGui not found within 5s")
+        end
+    else
+        table.insert(attempts, "LocalPlayer is nil")
+    end
+
+    -- Attempt 4: workspace (very last resort — will still render on client)
+    do
+        local ok, ws = pcall(function() return workspace end)
+        if ok and ws then
+            print("[FPS Booster] UI parent: workspace (fallback) ⚠")
+            return ws, "workspace"
+        end
+    end
+
+    print("[FPS Booster] ❌ Could not find any usable UI parent.")
+    for i, msg in ipairs(attempts) do
+        print("    [" .. i .. "] " .. msg)
+    end
+    return nil, nil
+end
+
+local uiParent, uiParentName = resolveUIParent()
+
+if not uiParent then
+    -- Fallback: try to notify via StarterGui:SetCore
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "FPS Booster",
+            Text  = "Could not create UI. Check executor console.",
+            Duration = 8,
+        })
+    end)
+    warn("[FPS Booster] Aborted — no UI parent available.")
+    return
 end
 
 -- ============================================================
--- 2. CONFIG & STATE
+-- 3. CONFIG & STATE
 -- ============================================================
 local DEFAULTS = {
     disablePostFX    = true,
@@ -59,7 +137,7 @@ local state = {}
 for k, v in pairs(DEFAULTS) do state[k] = v end
 
 -- ============================================================
--- 3. PALETTE
+-- 4. PALETTE
 -- ============================================================
 local C = {
     accent     = Color3.fromRGB(123, 92, 255),
@@ -67,7 +145,6 @@ local C = {
     panelBg    = Color3.fromRGB(20, 22, 29),
     panelTop   = Color3.fromRGB(26, 29, 38),
     line       = Color3.fromRGB(255, 255, 255),
-    lineAlpha  = 0.92,
     text       = Color3.fromRGB(232, 234, 240),
     muted      = Color3.fromRGB(135, 141, 158),
     good       = Color3.fromRGB(61, 220, 132),
@@ -78,7 +155,7 @@ local C = {
 }
 
 -- ============================================================
--- 4. UTILITIES
+-- 5. UTILITIES
 -- ============================================================
 local function safe(fn, ...)
     local ok, err = pcall(fn, ...)
@@ -89,12 +166,18 @@ local function safe(fn, ...)
 end
 
 local function new(class, props, children)
-    local inst = Instance.new(class)
+    local ok, inst = pcall(Instance.new, class)
+    if not ok or not inst then
+        warn("[FPS Booster] Failed to create " .. tostring(class))
+        return nil
+    end
     for k, v in pairs(props or {}) do
-        inst[k] = v
+        pcall(function() inst[k] = v end)
     end
     for _, child in ipairs(children or {}) do
-        child.Parent = inst
+        if child then
+            pcall(function() child.Parent = inst end)
+        end
     end
     return inst
 end
@@ -122,7 +205,7 @@ local function padding(px, parent)
 end
 
 -- ============================================================
--- 5. UI ROOT
+-- 6. GUI ROOT — build completely, THEN parent (critical fix)
 -- ============================================================
 local gui = new("ScreenGui", {
     Name = "FPSBooster_" .. tostring(math.random(1000, 9999)),
@@ -130,13 +213,18 @@ local gui = new("ScreenGui", {
     IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     DisplayOrder = 9999,
+    Enabled = true,
 })
-gui.Parent = getUIParent()
+
+if not gui then
+    warn("[FPS Booster] Failed to create ScreenGui.")
+    return
+end
 
 _G.__FPS_BOOSTER_INSTANCE = gui
 
 -- ============================================================
--- 6. TOASTS
+-- 7. TOASTS
 -- ============================================================
 local toastHolder = new("Frame", {
     Name = "ToastHolder",
@@ -146,6 +234,7 @@ local toastHolder = new("Frame", {
     Size = UDim2.new(0, 460, 0, 200),
     ZIndex = 50,
 }, { gui })
+
 new("UIListLayout", {
     FillDirection = Enum.FillDirection.Vertical,
     HorizontalAlignment = Enum.HorizontalAlignment.Center,
@@ -162,11 +251,12 @@ local function toast(title, text)
         BorderSizePixel = 0,
         ZIndex = 60,
     }, { toastHolder })
+    if not frame then return end
+
     corner(12, frame)
     local s = stroke(C.line, 0.92, 1, frame)
-    s.Color = Color3.fromRGB(40, 44, 58)
+    if s then s.Color = Color3.fromRGB(40, 44, 58) end
 
-    -- Left accent bar
     local bar = new("Frame", {
         BackgroundColor3 = C.accent,
         Size = UDim2.new(0, 3, 1, 0),
@@ -175,7 +265,7 @@ local function toast(title, text)
     }, { frame })
     corner(2, bar)
 
-    local titleLbl = new("TextLabel", {
+    new("TextLabel", {
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 16, 0, 12),
         Size = UDim2.new(1, -28, 0, 16),
@@ -187,7 +277,7 @@ local function toast(title, text)
         ZIndex = 61,
     }, { frame })
 
-    local bodyLbl = new("TextLabel", {
+    new("TextLabel", {
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 16, 0, 30),
         Size = UDim2.new(1, -28, 0, 0),
@@ -204,7 +294,6 @@ local function toast(title, text)
 
     padding(12, frame)
 
-    -- Animate in
     frame.BackgroundTransparency = 1
     frame.Position = UDim2.new(0, 0, 0, -10)
     TweenService:Create(frame, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -218,12 +307,14 @@ local function toast(title, text)
             Position = UDim2.new(0, 0, 0, -10),
         })
         out:Play()
-        out.Completed:Connect(function() frame:Destroy() end)
+        out.Completed:Connect(function()
+            pcall(function() frame:Destroy() end)
+        end)
     end)
 end
 
 -- ============================================================
--- 7. OPTIMIZATION ROUTINES
+-- 8. OPTIMIZATION ROUTINES
 -- ============================================================
 local optimizer = {}
 
@@ -285,7 +376,7 @@ function optimizer.optimizeWorkspace(onProgress)
         local processed = 0
 
         for _, obj in ipairs(list) do
-            if obj.Parent then
+            if obj and obj.Parent then
                 if state.flattenMaterials and obj:IsA("BasePart") then
                     safe(function()
                         obj.Material     = Enum.Material.Plastic
@@ -321,7 +412,7 @@ function optimizer.optimizeWorkspace(onProgress)
 end
 
 -- ============================================================
--- 8. WINDOW
+-- 9. WINDOW
 -- ============================================================
 local WIN_W, WIN_H = 400, 480
 
@@ -332,11 +423,11 @@ local window = new("Frame", {
     Size = UDim2.new(0, WIN_W, 0, WIN_H),
     BorderSizePixel = 0,
     ZIndex = 10,
+    Visible = true,
 }, { gui })
 corner(15, window)
 stroke(C.line, 0.94, 1, window)
 
--- Accent top line
 local topLine = new("Frame", {
     BackgroundColor3 = C.accent,
     Size = UDim2.new(1, 0, 0, 2),
@@ -344,7 +435,7 @@ local topLine = new("Frame", {
     ZIndex = 11,
 }, { window })
 corner(2, topLine)
-local topGrad = new("UIGradient", {
+new("UIGradient", {
     Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, C.accent),
         ColorSequenceKeypoint.new(0.6, C.accent2),
@@ -359,11 +450,11 @@ local titlebar = new("Frame", {
     Size = UDim2.new(1, 0, 0, 58),
     BorderSizePixel = 0,
     ZIndex = 11,
+    Active = true,
 }, { window })
 corner(15, titlebar)
 
--- Hide bottom corners of titlebar (approximate the HTML look)
-local tbMask = new("Frame", {
+new("Frame", {
     BackgroundColor3 = C.panelTop,
     Position = UDim2.new(0, 0, 1, -15),
     Size = UDim2.new(1, 0, 0, 15),
@@ -379,7 +470,7 @@ local logo = new("Frame", {
     ZIndex = 12,
 }, { titlebar })
 corner(10, logo)
-local logoGrad = new("UIGradient", {
+new("UIGradient", {
     Rotation = 45,
     Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, C.accent),
@@ -413,7 +504,7 @@ new("TextLabel", {
     Position = UDim2.new(0, 60, 0, 28),
     Size = UDim2.new(1, -140, 0, 14),
     Font = Enum.Font.Gotham,
-    Text = "client-side · v1.0",
+    Text = "client-side · v1.1",
     TextColor3 = C.muted,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -433,6 +524,7 @@ local function makeWinBtn(text, xOffset, danger)
         TextSize = 12,
         AutoButtonColor = false,
         ZIndex = 13,
+        Text = text,
     }, { titlebar })
     corner(7, btn)
 
@@ -464,7 +556,7 @@ local tabBar = new("Frame", {
     ZIndex = 11,
 }, { window })
 
-local tabUnderline = new("Frame", {
+new("Frame", {
     BackgroundColor3 = Color3.fromRGB(255, 255, 255),
     BackgroundTransparency = 0.93,
     Position = UDim2.new(0, 0, 1, -1),
@@ -503,7 +595,7 @@ for i, name in ipairs(tabNames) do
     tabs[tabKeys[i]] = { button = tab, indicator = indicator }
 end
 
--- ---------- Content area ----------
+-- ---------- Content ----------
 local content = new("Frame", {
     BackgroundTransparency = 1,
     Position = UDim2.new(0, 0, 0, 100),
@@ -512,7 +604,6 @@ local content = new("Frame", {
     ZIndex = 11,
 }, { window })
 
--- Panels
 local panels = {}
 for _, key in ipairs(tabKeys) do
     local panel = new("ScrollingFrame", {
@@ -588,13 +679,9 @@ local function makeRow(parent, order)
     }, { row })
 
     makeDivider(row)
-    -- move divider to the bottom
-    row.ChildAdded:Connect(function() end)
-
     return row, title, sub
 end
 
--- Toggle control
 local function buildToggle(row, key, initial)
     local track = new("TextButton", {
         BackgroundColor3 = initial and C.accent or C.track,
@@ -629,7 +716,6 @@ local function buildToggle(row, key, initial)
     track.MouseButton1Click:Connect(function()
         state[key] = not state[key]
         setVisual(state[key])
-        if onToggleChanged then onToggleChanged(key, state[key]) end
     end)
 
     return function()
@@ -638,7 +724,6 @@ local function buildToggle(row, key, initial)
     end
 end
 
--- Slider control
 local function buildSlider(row, key, min, max, step, suffix, formatFn)
     local valueLbl = new("TextLabel", {
         BackgroundColor3 = Color3.fromRGB(255, 255, 255),
@@ -680,7 +765,7 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         ZIndex = 14,
     }, { sliderBg })
     corner(8, knob)
-    local knobStroke = new("UIStroke", {
+    new("UIStroke", {
         Color = C.accent,
         Thickness = 3,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
@@ -698,10 +783,8 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         fill.Size = UDim2.new(alpha, 0, 1, 0)
         knob.Position = UDim2.new(alpha, 0, 0.5, 0)
         valueLbl.Text = fmt(v)
-        if fire and onSliderChanged then onSliderChanged(key, v) end
     end
 
-    -- Interaction
     local dragging = false
     local function handleInput(input)
         local rel = (input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X
@@ -731,12 +814,14 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         end
     end)
 
+    setValue(DEFAULTS[key], false)
+
     return function()
         setValue(DEFAULTS[key], false)
     end
 end
 
--- ---------- Build Main tab rows ----------
+-- ---------- Main tab ----------
 do
     local defs = {
         { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom · Blur · SunRays · ColorCorrection" },
@@ -746,55 +831,41 @@ do
     }
     for i, d in ipairs(defs) do
         local row, t, s = makeRow(panels.main, i)
-        t.Text = d.title
-        s.Text = d.sub
+        if t then t.Text = d.title end
+        if s then s.Text = d.sub end
         buildToggle(row, d.key, state[d.key])
     end
 end
 
--- ---------- Build Performance tab rows ----------
+-- ---------- Performance tab ----------
 do
-    -- FPS Cap
     local row1, t1, s1 = makeRow(panels.perf, 1)
-    t1.Text = "FPS Cap"
-    s1.Text = "setfpscap(value)"
+    t1.Text = "FPS Cap"; s1.Text = "setfpscap(value)"
     buildSlider(row1, "fpsCap", 30, 240, 10, "", nil)
 
-    -- Start Delay
     local row2, t2, s2 = makeRow(panels.perf, 2)
-    t2.Text = "Start Delay"
-    s2.Text = "task.wait(seconds)"
+    t2.Text = "Start Delay"; s2.Text = "task.wait(seconds)"
     buildSlider(row2, "startDelay", 0, 10, 1, "s", nil)
 
-    -- Batch Size
     local row3, t3, s3 = makeRow(panels.perf, 3)
-    t3.Text = "Batch Size"
-    s3.Text = "objects per task.wait()"
+    t3.Text = "Batch Size"; s3.Text = "objects per task.wait()"
     buildSlider(row3, "batchSize", 50, 1000, 50, "", nil)
 
-    -- Optimize Terrain
     local row4, t4, s4 = makeRow(panels.perf, 4)
-    t4.Text = "Optimize Terrain Water"
-    s4.Text = "WaveSize 0 · Reflectance 0"
+    t4.Text = "Optimize Terrain Water"; s4.Text = "WaveSize 0 · Reflectance 0"
     buildToggle(row4, "optimizeTerrain", state.optimizeTerrain)
 
-    -- Global Shadows
     local row5, t5, s5 = makeRow(panels.perf, 5)
-    t5.Text = "Disable Global Shadows"
-    s5.Text = "Lighting.GlobalShadows = false"
+    t5.Text = "Disable Global Shadows"; s5.Text = "Lighting.GlobalShadows = false"
     buildToggle(row5, "globalShadowsOff", state.globalShadowsOff)
 end
 
--- ---------- Build Output tab ----------
+-- ---------- Output tab ----------
 local consoleFrame = new("Frame", {
     BackgroundTransparency = 1,
     Size = UDim2.new(1, 0, 1, 0),
     ZIndex = 11,
 }, { panels.log })
-new("UIListLayout", {
-    SortOrder = Enum.SortOrder.LayoutOrder,
-    Padding = UDim.new(0, 2),
-}, { consoleFrame })
 
 local consoleScroll = new("ScrollingFrame", {
     BackgroundTransparency = 1,
@@ -821,7 +892,7 @@ local function logLine(message, kind)
     if kind == "err"  then color = C.bad end
     if kind == "dim"  then color = Color3.fromRGB(95, 102, 120) end
 
-    local lbl = new("TextLabel", {
+    new("TextLabel", {
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
@@ -836,7 +907,6 @@ local function logLine(message, kind)
         ZIndex = 11,
     }, { consoleScroll })
 
-    -- Cap the buffer
     local children = consoleScroll:GetChildren()
     local lineCount = 0
     for _, c in ipairs(children) do
@@ -852,7 +922,9 @@ local function logLine(message, kind)
     end
 
     task.defer(function()
-        consoleScroll.CanvasPosition = Vector2.new(0, consoleScroll.AbsoluteCanvasSize.Y)
+        pcall(function()
+            consoleScroll.CanvasPosition = Vector2.new(0, consoleScroll.AbsoluteCanvasSize.Y)
+        end)
     end)
 end
 
@@ -870,8 +942,8 @@ local function makeButton(text, primary)
     local btn = new("TextButton", {
         BackgroundColor3 = primary and C.accent or Color3.fromRGB(40, 44, 56),
         BackgroundTransparency = primary and 0 or 0.45,
-        Position = UDim2.new(0, 0, 0, 12),
-        Size = UDim2.new(0, primary and 0 or 90, 0, 32),
+        Position = primary and UDim2.new(0, 100, 0, 12) or UDim2.new(0, 12, 0, 12),
+        Size = primary and UDim2.new(1, -110, 0, 32) or UDim2.new(0, 90, 0, 32),
         BorderSizePixel = 0,
         Font = Enum.Font.GothamBold,
         Text = text,
@@ -882,17 +954,13 @@ local function makeButton(text, primary)
     }, { footer })
     corner(9, btn)
     if primary then
-        local g = new("UIGradient", {
+        new("UIGradient", {
             Rotation = 45,
             Color = ColorSequence.new({
                 ColorSequenceKeypoint.new(0, C.accent),
                 ColorSequenceKeypoint.new(1, C.accent2),
             }),
         }, { btn })
-        btn.Size = UDim2.new(1, -110, 0, 32)
-        btn.Position = UDim2.new(0, 100, 0, 12)
-    else
-        btn.Position = UDim2.new(0, 12, 0, 12)
     end
 
     btn.MouseEnter:Connect(function()
@@ -931,7 +999,7 @@ corner(22, chip)
 stroke(C.line, 0.88, 1, chip)
 
 -- ============================================================
--- 9. TAB SWITCHING
+-- 10. TAB SWITCHING
 -- ============================================================
 local function selectTab(key)
     for _, k in ipairs(tabKeys) do
@@ -950,7 +1018,7 @@ for _, key in ipairs(tabKeys) do
 end
 
 -- ============================================================
--- 10. DRAGGING
+-- 11. DRAGGING
 -- ============================================================
 local dragging = false
 local dragStart, startPos
@@ -984,7 +1052,7 @@ titlebar.InputEnded:Connect(function(input)
 end)
 
 -- ============================================================
--- 11. MINIMIZE / CLOSE / REOPEN
+-- 12. MINIMIZE / CLOSE / REOPEN
 -- ============================================================
 btnMin.MouseButton1Click:Connect(function()
     local collapsed = window:GetAttribute("Collapsed") or false
@@ -1017,13 +1085,11 @@ chip.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
--- 12. APPLY / RESET
+-- 13. APPLY / RESET
 -- ============================================================
 local applied = false
 
 local function refreshLightingLoop()
-    -- Continuously re-apply the lightest settings, since some games
-    -- reset them. Cheap and safe.
     task.spawn(function()
         while gui.Parent do
             optimizer.applyLighting()
@@ -1068,7 +1134,6 @@ btnApply.MouseButton1Click:Connect(function()
         logLine("Textures preserved (removeTextures = false)", "warn")
     end
 
-    -- Run after startDelay
     task.spawn(function()
         task.wait(state.startDelay)
 
@@ -1084,7 +1149,6 @@ btnApply.MouseButton1Click:Connect(function()
         end)
 
         logLine("[FPS Booster] All optimizations applied successfully.", "ok")
-
         toast("FPS Booster", "Optimizations applied. FPS should be improved.")
     end)
 
@@ -1095,35 +1159,76 @@ btnApply.MouseButton1Click:Connect(function()
 end)
 
 btnReset.MouseButton1Click:Connect(function()
-    -- Reset state to defaults
     for k, v in pairs(DEFAULTS) do state[k] = v end
 
-    -- Rebuild the UI from scratch (cleanest way to reset visual controls)
-    local ok = pcall(function() gui:Destroy() end)
-    _G.__FPS_BOOSTER_INSTANCE = nil
-
-    task.wait(0.05)
-
-    -- Re-execute the whole script
-    local src = debug.getinfo(1, "S").source
-    if src and src:sub(1, 1) == "@" then
-        local path = src:sub(2)
-        local f = loadfile(path)
-        if f then
-            f()
-        else
-            -- Fallback: ask the user to re-run
-            toast("FPS Booster", "Reset requires re-running the script.")
+    -- Rebuild visuals in place (no destroy-and-reload)
+    for _, key in ipairs(tabKeys) do
+        local panel = panels[key]
+        for _, child in ipairs(panel:GetChildren()) do
+            if child:IsA("Frame") then
+                child:Destroy()
+            end
         end
     end
+
+    -- Re-add Main tab rows
+    local mainDefs = {
+        { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom · Blur · SunRays · ColorCorrection" },
+        { key = "disableParticles", title = "Disable Particles",     sub = "ParticleEmitter · Trail · Fire · Smoke" },
+        { key = "flattenMaterials", title = "Flatten Materials",     sub = "Plastic · Reflectance 0 · CastShadow off" },
+        { key = "removeTextures",   title = "Remove Textures",       sub = "Decal · Texture · Transparency = 1" },
+    }
+    for i, d in ipairs(mainDefs) do
+        local row, t, s = makeRow(panels.main, i)
+        t.Text = d.title; s.Text = d.sub
+        buildToggle(row, d.key, state[d.key])
+    end
+
+    selectTab("log")
+    logLine("Configuration reset to defaults.", "warn")
+    toast("FPS Booster", "Settings restored to defaults.")
 end)
 
 -- ============================================================
--- 13. BOOT
+-- 14. PARENT THE GUI (LAST — this is the critical fix)
+-- ============================================================
+local parentOk, parentErr = pcall(function()
+    gui.Parent = uiParent
+end)
+
+if not parentOk then
+    warn("[FPS Booster] Failed to parent GUI: " .. tostring(parentErr))
+    -- Try fallbacks
+    local fallbacks = {
+        function() return game:GetService("CoreGui") end,
+        function() return LocalPlayer:WaitForChild("PlayerGui") end,
+        function() return workspace end,
+    }
+    for _, getter in ipairs(fallbacks) do
+        local ok, target = pcall(getter)
+        if ok and target then
+            local ok2 = pcall(function() gui.Parent = target end)
+            if ok2 then
+                print("[FPS Booster] Fallback parent succeeded: " .. target.Name)
+                parentOk = true
+                break
+            end
+        end
+    end
+end
+
+if not parentOk then
+    warn("[FPS Booster] ❌ Could not parent the GUI anywhere. UI will not appear.")
+    return
+end
+
+-- ============================================================
+-- 15. BOOT
 -- ============================================================
 selectTab("main")
 
-logLine("FPS Booster v1.0 loaded.", "ok")
+logLine("FPS Booster v1.1 loaded.", "ok")
+logLine("UI parent: " .. tostring(uiParentName), "dim")
 logLine("Ready. Configure options and press Apply.", "dim")
 logLine("Tip: drag the title bar to reposition this window.", "dim")
 
@@ -1131,4 +1236,6 @@ task.delay(0.7, function()
     toast("FPS Booster", "Menu loaded. Adjust settings, then press Apply.")
 end)
 
-print("[FPS Booster] UI loaded successfully.")
+print("[FPS Booster] ✅ UI loaded successfully.")
+print("[FPS Booster] GUI parent: " .. tostring(uiParentName))
+print("[FPS Booster] GUI name: " .. gui.Name)
