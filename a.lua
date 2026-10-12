@@ -1,7 +1,7 @@
 -- ============================================================
---  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [FIXED v1.1]
---  Robust UI parenting + debug output + fallbacks.
---  Requires an executor.
+--  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [v1.2 DELTA-SAFE]
+--  Robust UI parenting + boot guard + debug output + fallbacks.
+--  Requires an executor (tested target: Delta on mobile).
 -- ============================================================
 
 -- ============================================================
@@ -13,100 +13,93 @@ if _G.__FPS_BOOSTER_INSTANCE then
 end
 
 print("=========================================")
-print("[FPS Booster] Starting up…")
+print("[FPS Booster] Starting up (v1.2)...")
 print("=========================================")
 
 -- ============================================================
--- 1. SERVICES
+-- 1. SERVICES & BOOT GUARD
 -- ============================================================
-local Players           = game:GetService("Players")
-local Lighting          = game:GetService("Lighting")
-local TweenService      = game:GetService("TweenService")
-local UserInputService  = game:GetService("UserInputService")
-local RunService        = game:GetService("RunService")
+local Players          = game:GetService("Players")
+local Lighting         = game:GetService("Lighting")
+local TweenService     = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
 
+-- Wait for the game to load — Delta often injects before the client is ready
+if not game:IsLoaded() then
+    print("[FPS Booster] Waiting for game to load...")
+    pcall(function() game.Loaded:Wait() end)
+end
+
+-- Give Delta's injection pipeline a moment to settle
+task.wait(0.75)
+
+-- Wait for LocalPlayer (Delta sometimes injects before it exists)
 local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    print("[FPS Booster] Waiting for LocalPlayer...")
+    local timeout = 15
+    local start = tick()
+    repeat
+        task.wait(0.1)
+        LocalPlayer = Players.LocalPlayer
+    until LocalPlayer or (tick() - start) > timeout
+end
+
+if not LocalPlayer then
+    warn("[FPS Booster] ❌ LocalPlayer never appeared. Aborting.")
+    return
+end
+
+print("[FPS Booster] LocalPlayer ready: " .. LocalPlayer.Name)
 
 -- ============================================================
--- 2. ROBUST UI PARENT RESOLVER
+-- 2. DELTA-SAFE UI PARENT RESOLVER
 -- ============================================================
--- Tries, in order:
---   1. gethui()      -- best for executors, bypasses CoreGui protection
---   2. CoreGui       -- may be blocked on some executors
---   3. PlayerGui     -- always available but sometimes hidden on mobile
---   4. workspace     -- last-ditch fallback for stubborn executors
 local function resolveUIParent()
-    local attempts = {}
-
-    -- Attempt 1: gethui()
+    -- Priority 1: gethui() — Delta's protected UI container
     if type(gethui) == "function" then
         local ok, hui = pcall(gethui)
         if ok and hui then
             local usable = pcall(function() local _ = hui.Name end)
             if usable then
-                print("[FPS Booster] UI parent: gethui() ✓")
+                print("[FPS Booster] UI parent: gethui() (Delta-safe) ✓")
                 return hui, "gethui"
-            else
-                table.insert(attempts, "gethui() returned unusable instance")
             end
-        else
-            table.insert(attempts, "gethui() call failed: " .. tostring(hui))
         end
-    else
-        table.insert(attempts, "gethui is not a function")
     end
 
-    -- Attempt 2: CoreGui
+    -- Priority 2: CoreGui (may be blocked on Delta)
     do
         local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
         if ok and coreGui then
-            local nameOk, nameErr = pcall(function() return coreGui.Name end)
+            local nameOk = pcall(function() return coreGui.Name end)
             if nameOk then
                 print("[FPS Booster] UI parent: CoreGui ✓")
                 return coreGui, "CoreGui"
-            else
-                table.insert(attempts, "CoreGui blocked: " .. tostring(nameErr))
             end
-        else
-            table.insert(attempts, "CoreGui service unreachable")
         end
     end
 
-    -- Attempt 3: PlayerGui
-    if LocalPlayer then
+    -- Priority 3: PlayerGui
+    do
         local ok, playerGui = pcall(function()
-            return LocalPlayer:WaitForChild("PlayerGui", 5)
+            return LocalPlayer:WaitForChild("PlayerGui", 10)
         end)
         if ok and playerGui then
             print("[FPS Booster] UI parent: PlayerGui ✓")
             return playerGui, "PlayerGui"
-        else
-            table.insert(attempts, "PlayerGui not found within 5s")
-        end
-    else
-        table.insert(attempts, "LocalPlayer is nil")
-    end
-
-    -- Attempt 4: workspace (very last resort — will still render on client)
-    do
-        local ok, ws = pcall(function() return workspace end)
-        if ok and ws then
-            print("[FPS Booster] UI parent: workspace (fallback) ⚠")
-            return ws, "workspace"
         end
     end
 
-    print("[FPS Booster] ❌ Could not find any usable UI parent.")
-    for i, msg in ipairs(attempts) do
-        print("    [" .. i .. "] " .. msg)
-    end
-    return nil, nil
+    -- Priority 4: workspace (very last resort)
+    print("[FPS Booster] UI parent: workspace (fallback) ⚠")
+    return workspace, "workspace"
 end
 
 local uiParent, uiParentName = resolveUIParent()
 
 if not uiParent then
-    -- Fallback: try to notify via StarterGui:SetCore
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title = "FPS Booster",
@@ -114,7 +107,7 @@ if not uiParent then
             Duration = 8,
         })
     end)
-    warn("[FPS Booster] Aborted — no UI parent available.")
+    warn("[FPS Booster] ❌ No UI parent available. Aborting.")
     return
 end
 
@@ -140,18 +133,18 @@ for k, v in pairs(DEFAULTS) do state[k] = v end
 -- 4. PALETTE
 -- ============================================================
 local C = {
-    accent     = Color3.fromRGB(123, 92, 255),
-    accent2    = Color3.fromRGB(78, 168, 255),
-    panelBg    = Color3.fromRGB(20, 22, 29),
-    panelTop   = Color3.fromRGB(26, 29, 38),
-    line       = Color3.fromRGB(255, 255, 255),
-    text       = Color3.fromRGB(232, 234, 240),
-    muted      = Color3.fromRGB(135, 141, 158),
-    good       = Color3.fromRGB(61, 220, 132),
-    warn       = Color3.fromRGB(255, 196, 77),
-    bad        = Color3.fromRGB(255, 92, 92),
-    track      = Color3.fromRGB(40, 44, 56),
-    chipBg     = Color3.fromRGB(28, 31, 41),
+    accent    = Color3.fromRGB(123, 92, 255),
+    accent2   = Color3.fromRGB(78, 168, 255),
+    panelBg   = Color3.fromRGB(20, 22, 29),
+    panelTop  = Color3.fromRGB(26, 29, 38),
+    text      = Color3.fromRGB(232, 234, 240),
+    muted     = Color3.fromRGB(135, 141, 158),
+    good      = Color3.fromRGB(61, 220, 132),
+    warn      = Color3.fromRGB(255, 196, 77),
+    bad       = Color3.fromRGB(255, 92, 92),
+    track     = Color3.fromRGB(40, 44, 56),
+    chipBg    = Color3.fromRGB(28, 31, 41),
+    line      = Color3.fromRGB(255, 255, 255),
 }
 
 -- ============================================================
@@ -205,7 +198,7 @@ local function padding(px, parent)
 end
 
 -- ============================================================
--- 6. GUI ROOT — build completely, THEN parent (critical fix)
+-- 6. GUI ROOT — build everything, parent LAST
 -- ============================================================
 local gui = new("ScreenGui", {
     Name = "FPSBooster_" .. tostring(math.random(1000, 9999)),
@@ -217,7 +210,7 @@ local gui = new("ScreenGui", {
 })
 
 if not gui then
-    warn("[FPS Booster] Failed to create ScreenGui.")
+    warn("[FPS Booster] ❌ Failed to create ScreenGui. Aborting.")
     return
 end
 
@@ -257,13 +250,12 @@ local function toast(title, text)
     local s = stroke(C.line, 0.92, 1, frame)
     if s then s.Color = Color3.fromRGB(40, 44, 58) end
 
-    local bar = new("Frame", {
+    new("Frame", {
         BackgroundColor3 = C.accent,
         Size = UDim2.new(0, 3, 1, 0),
         BorderSizePixel = 0,
         ZIndex = 61,
     }, { frame })
-    corner(2, bar)
 
     new("TextLabel", {
         BackgroundTransparency = 1,
@@ -345,9 +337,9 @@ function optimizer.optimizeTerrain()
     local terrain = workspace:FindFirstChildOfClass("Terrain")
     if not terrain then return end
     safe(function()
-        terrain.WaterWaveSize    = 0
-        terrain.WaterWaveSpeed   = 0
-        terrain.WaterReflectance = 0
+        terrain.WaterWaveSize     = 0
+        terrain.WaterWaveSpeed    = 0
+        terrain.WaterReflectance  = 0
         terrain.WaterTransparency = 1
     end)
 end
@@ -379,9 +371,9 @@ function optimizer.optimizeWorkspace(onProgress)
             if obj and obj.Parent then
                 if state.flattenMaterials and obj:IsA("BasePart") then
                     safe(function()
-                        obj.Material     = Enum.Material.Plastic
-                        obj.Reflectance  = 0
-                        obj.CastShadow   = false
+                        obj.Material    = Enum.Material.Plastic
+                        obj.Reflectance = 0
+                        obj.CastShadow  = false
                     end)
                 end
 
@@ -481,9 +473,9 @@ new("TextLabel", {
     BackgroundTransparency = 1,
     Size = UDim2.new(1, 0, 1, 0),
     Font = Enum.Font.GothamBold,
-    Text = "⚡",
+    Text = "FB",
     TextColor3 = Color3.new(1, 1, 1),
-    TextSize = 16,
+    TextSize = 14,
     ZIndex = 13,
 }, { logo })
 
@@ -504,7 +496,7 @@ new("TextLabel", {
     Position = UDim2.new(0, 60, 0, 28),
     Size = UDim2.new(1, -140, 0, 14),
     Font = Enum.Font.Gotham,
-    Text = "client-side · v1.1",
+    Text = "client-side · v1.2",
     TextColor3 = C.muted,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -524,7 +516,6 @@ local function makeWinBtn(text, xOffset, danger)
         TextSize = 12,
         AutoButtonColor = false,
         ZIndex = 13,
-        Text = text,
     }, { titlebar })
     corner(7, btn)
 
@@ -545,8 +536,8 @@ local function makeWinBtn(text, xOffset, danger)
     return btn
 end
 
-local btnMin   = makeWinBtn("–", -66, false)
-local btnClose = makeWinBtn("✕", -36, true)
+local btnMin   = makeWinBtn("-", -66, false)
+local btnClose = makeWinBtn("X", -36, true)
 
 -- ---------- Tabs ----------
 local tabBar = new("Frame", {
@@ -776,7 +767,7 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         return tostring(v) .. (suffix or "")
     end
 
-    local function setValue(v, fire)
+    local function setValue(v)
         v = math.clamp(v, min, max)
         state[key] = v
         local alpha = (v - min) / (max - min)
@@ -791,7 +782,7 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         rel = math.clamp(rel, 0, 1)
         local raw = min + rel * (max - min)
         local snapped = math.floor((raw + step / 2) / step) * step
-        setValue(snapped, true)
+        setValue(snapped)
     end
 
     sliderBg.InputBegan:Connect(function(input)
@@ -814,20 +805,20 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         end
     end)
 
-    setValue(DEFAULTS[key], false)
+    setValue(DEFAULTS[key])
 
     return function()
-        setValue(DEFAULTS[key], false)
+        setValue(DEFAULTS[key])
     end
 end
 
 -- ---------- Main tab ----------
 do
     local defs = {
-        { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom · Blur · SunRays · ColorCorrection" },
-        { key = "disableParticles", title = "Disable Particles",     sub = "ParticleEmitter · Trail · Fire · Smoke" },
-        { key = "flattenMaterials", title = "Flatten Materials",     sub = "Plastic · Reflectance 0 · CastShadow off" },
-        { key = "removeTextures",   title = "Remove Textures",       sub = "Decal · Texture · Transparency = 1" },
+        { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom - Blur - SunRays - ColorCorrection" },
+        { key = "disableParticles", title = "Disable Particles",     sub = "ParticleEmitter - Trail - Fire - Smoke" },
+        { key = "flattenMaterials", title = "Flatten Materials",     sub = "Plastic - Reflectance 0 - CastShadow off" },
+        { key = "removeTextures",   title = "Remove Textures",       sub = "Decal - Texture - Transparency = 1" },
     }
     for i, d in ipairs(defs) do
         local row, t, s = makeRow(panels.main, i)
@@ -852,7 +843,7 @@ do
     buildSlider(row3, "batchSize", 50, 1000, 50, "", nil)
 
     local row4, t4, s4 = makeRow(panels.perf, 4)
-    t4.Text = "Optimize Terrain Water"; s4.Text = "WaveSize 0 · Reflectance 0"
+    t4.Text = "Optimize Terrain Water"; s4.Text = "WaveSize 0 - Reflectance 0"
     buildToggle(row4, "optimizeTerrain", state.optimizeTerrain)
 
     local row5, t5, s5 = makeRow(panels.perf, 5)
@@ -988,7 +979,7 @@ local chip = new("TextButton", {
     Size = UDim2.new(0, 160, 0, 44),
     BorderSizePixel = 0,
     Font = Enum.Font.GothamBold,
-    Text = "  ⚡   FPS Booster",
+    Text = "  FPS Booster",
     TextColor3 = C.text,
     TextSize = 12,
     AutoButtonColor = false,
@@ -1102,23 +1093,23 @@ btnApply.MouseButton1Click:Connect(function()
     selectTab("log")
 
     if applied then
-        logLine("[FPS Booster] Re-applying configuration…", "dim")
+        logLine("[FPS Booster] Re-applying configuration...", "dim")
     else
-        logLine("[FPS Booster] Initializing client-side optimizer…", "dim")
+        logLine("[FPS Booster] Initializing client-side optimizer...", "dim")
     end
 
     if state.globalShadowsOff then
         logLine("Lighting.GlobalShadows = false", "ok")
     end
     if state.disablePostFX then
-        logLine("Disabling PostEffect instances…", "ok")
+        logLine("Disabling PostEffect instances...", "ok")
     end
     if state.optimizeTerrain then
         logLine("Terrain.WaterWaveSize = 0", "ok")
     end
 
     logLine("setfpscap(" .. tostring(state.fpsCap) .. ")", "ok")
-    logLine("Waiting " .. tostring(state.startDelay) .. "s for game to load…", "dim")
+    logLine("Waiting " .. tostring(state.startDelay) .. "s for game to load...", "dim")
 
     local active = {}
     if state.flattenMaterials then table.insert(active, "flattenMaterials") end
@@ -1126,7 +1117,7 @@ btnApply.MouseButton1Click:Connect(function()
     if state.removeTextures   then table.insert(active, "removeTextures")   end
 
     if #active > 0 then
-        logLine("Scanning workspace (" .. table.concat(active, ", ") .. ")…", "dim")
+        logLine("Scanning workspace (" .. table.concat(active, ", ") .. ")...", "dim")
         logLine("Batch size: " .. tostring(state.batchSize) .. " objects per task.wait()", "dim")
     end
 
@@ -1161,22 +1152,16 @@ end)
 btnReset.MouseButton1Click:Connect(function()
     for k, v in pairs(DEFAULTS) do state[k] = v end
 
-    -- Rebuild visuals in place (no destroy-and-reload)
-    for _, key in ipairs(tabKeys) do
-        local panel = panels[key]
-        for _, child in ipairs(panel:GetChildren()) do
-            if child:IsA("Frame") then
-                child:Destroy()
-            end
-        end
+    -- Rebuild Main tab in place
+    for _, child in ipairs(panels.main:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
     end
 
-    -- Re-add Main tab rows
     local mainDefs = {
-        { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom · Blur · SunRays · ColorCorrection" },
-        { key = "disableParticles", title = "Disable Particles",     sub = "ParticleEmitter · Trail · Fire · Smoke" },
-        { key = "flattenMaterials", title = "Flatten Materials",     sub = "Plastic · Reflectance 0 · CastShadow off" },
-        { key = "removeTextures",   title = "Remove Textures",       sub = "Decal · Texture · Transparency = 1" },
+        { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom - Blur - SunRays - ColorCorrection" },
+        { key = "disableParticles", title = "Disable Particles",     sub = "ParticleEmitter - Trail - Fire - Smoke" },
+        { key = "flattenMaterials", title = "Flatten Materials",     sub = "Plastic - Reflectance 0 - CastShadow off" },
+        { key = "removeTextures",   title = "Remove Textures",       sub = "Decal - Texture - Transparency = 1" },
     }
     for i, d in ipairs(mainDefs) do
         local row, t, s = makeRow(panels.main, i)
@@ -1190,26 +1175,44 @@ btnReset.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
--- 14. PARENT THE GUI (LAST — this is the critical fix)
+-- 14. PARENT THE GUI (LAST — critical for Delta)
 -- ============================================================
 local parentOk, parentErr = pcall(function()
     gui.Parent = uiParent
 end)
 
 if not parentOk then
-    warn("[FPS Booster] Failed to parent GUI: " .. tostring(parentErr))
-    -- Try fallbacks
+    warn("[FPS Booster] Failed to parent to " .. tostring(uiParentName) .. ": " .. tostring(parentErr))
+
+    -- Fallback chain
     local fallbacks = {
-        function() return game:GetService("CoreGui") end,
-        function() return LocalPlayer:WaitForChild("PlayerGui") end,
-        function() return workspace end,
+        { name = "gethui",   getter = function()
+            if type(gethui) == "function" then
+                local ok, h = pcall(gethui)
+                if ok then return h end
+            end
+            return nil
+        end },
+        { name = "CoreGui",  getter = function()
+            local ok, c = pcall(function() return game:GetService("CoreGui") end)
+            if ok then return c end
+            return nil
+        end },
+        { name = "PlayerGui", getter = function()
+            local ok, p = pcall(function() return LocalPlayer:WaitForChild("PlayerGui", 5) end)
+            if ok then return p end
+            return nil
+        end },
+        { name = "workspace", getter = function() return workspace end },
     }
-    for _, getter in ipairs(fallbacks) do
-        local ok, target = pcall(getter)
-        if ok and target then
+
+    for _, fb in ipairs(fallbacks) do
+        local target = fb.getter()
+        if target then
             local ok2 = pcall(function() gui.Parent = target end)
             if ok2 then
-                print("[FPS Booster] Fallback parent succeeded: " .. target.Name)
+                print("[FPS Booster] Fallback parent succeeded: " .. fb.name)
+                uiParentName = fb.name
                 parentOk = true
                 break
             end
@@ -1219,6 +1222,13 @@ end
 
 if not parentOk then
     warn("[FPS Booster] ❌ Could not parent the GUI anywhere. UI will not appear.")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "FPS Booster",
+            Text  = "UI failed to load. Try re-running the script.",
+            Duration = 8,
+        })
+    end)
     return
 end
 
@@ -1227,7 +1237,7 @@ end
 -- ============================================================
 selectTab("main")
 
-logLine("FPS Booster v1.1 loaded.", "ok")
+logLine("FPS Booster v1.2 loaded.", "ok")
 logLine("UI parent: " .. tostring(uiParentName), "dim")
 logLine("Ready. Configure options and press Apply.", "dim")
 logLine("Tip: drag the title bar to reposition this window.", "dim")
