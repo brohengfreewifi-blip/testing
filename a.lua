@@ -1,9 +1,11 @@
 -- ============================================================
---  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [v1.3 DELTA-SAFE]
+--  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [v1.4 DELTA-SAFE]
 --  Robust UI parenting + boot guard + debug output + fallbacks.
 --  Requires an executor (tested target: Delta on mobile).
 --  v1.3: added Player ESP tab (Box / Name / Distance / Health /
 --        Tracer / Highlight / Team Check / Max Distance).
+--  v1.4: added Aimbot tab (LMB/RMB hold, FOV, smoothness,
+--        target part, team check, visibility check).
 -- ============================================================
 
 -- ============================================================
@@ -15,7 +17,7 @@ if _G.__FPS_BOOSTER_INSTANCE then
 end
 
 print("=========================================")
-print("[FPS Booster] Starting up (v1.3)...")
+print("[FPS Booster] Starting up (v1.4)...")
 print("=========================================")
 
 -- ============================================================
@@ -59,7 +61,6 @@ print("[FPS Booster] LocalPlayer ready: " .. LocalPlayer.Name)
 -- 2. DELTA-SAFE UI PARENT RESOLVER
 -- ============================================================
 local function resolveUIParent()
-    -- Priority 1: gethui() — Delta's protected UI container
     if type(gethui) == "function" then
         local ok, hui = pcall(gethui)
         if ok and hui then
@@ -71,7 +72,6 @@ local function resolveUIParent()
         end
     end
 
-    -- Priority 2: CoreGui (may be blocked on Delta)
     do
         local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
         if ok and coreGui then
@@ -83,7 +83,6 @@ local function resolveUIParent()
         end
     end
 
-    -- Priority 3: PlayerGui
     do
         local ok, playerGui = pcall(function()
             return LocalPlayer:WaitForChild("PlayerGui", 10)
@@ -94,7 +93,6 @@ local function resolveUIParent()
         end
     end
 
-    -- Priority 4: workspace (very last resort)
     print("[FPS Booster] UI parent: workspace (fallback) ⚠")
     return workspace, "workspace"
 end
@@ -137,6 +135,16 @@ local DEFAULTS = {
     espTeamCheck     = true,
     espHighlight     = true,
     espMaxDistance   = 500,
+    -- aimbot
+    aimEnabled       = false,
+    aimUseLeft       = false,
+    aimUseRight      = true,
+    aimSmoothness    = 5,
+    aimFOV           = 120,
+    aimMaxDistance   = 600,
+    aimTargetHead    = true,
+    aimTeamCheck     = true,
+    aimVisibleCheck  = false,
 }
 
 local state = {}
@@ -213,6 +221,9 @@ local function padding(px, parent)
         PaddingRight  = UDim.new(0, px),
     }, { parent })
 end
+
+local RAY_EXCLUDE = Enum.RaycastFilterType.Exclude
+    or Enum.RaycastFilterType.Blacklist
 
 -- ============================================================
 -- 6. GUI ROOT — build everything, parent LAST
@@ -513,7 +524,7 @@ new("TextLabel", {
     Position = UDim2.new(0, 60, 0, 28),
     Size = UDim2.new(1, -140, 0, 14),
     Font = Enum.Font.Gotham,
-    Text = "client-side · v1.3",
+    Text = "client-side · v1.4",
     TextColor3 = C.muted,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -574,8 +585,8 @@ new("Frame", {
 }, { tabBar })
 
 local tabs = {}
-local tabNames = { "Main", "Performance", "ESP", "Output" }
-local tabKeys  = { "main", "perf", "esp", "log" }
+local tabNames = { "Main", "Perf", "ESP", "Aim", "Log" }
+local tabKeys  = { "main", "perf", "esp", "aim", "log" }
 local TAB_COUNT = #tabNames
 local TAB_W = 1 / TAB_COUNT
 
@@ -916,6 +927,52 @@ rebuildESPTab = function()
 end
 rebuildESPTab()
 
+-- ---------- Aimbot tab ----------
+local refreshAimbot  -- forward declaration (assigned in §13.6)
+local rebuildAimbotTab
+
+rebuildAimbotTab = function()
+    for _, child in ipairs(panels.aim:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+
+    local toggles = {
+        { key = "aimEnabled",      title = "Enable Aimbot",       sub = "Master toggle for the aimbot" },
+        { key = "aimUseLeft",      title = "Hold Left Click",     sub = "Activate while LMB is held" },
+        { key = "aimUseRight",     title = "Hold Right Click",    sub = "Activate while RMB is held" },
+        { key = "aimTargetHead",   title = "Target Head",         sub = "Off = target HumanoidRootPart" },
+        { key = "aimTeamCheck",    title = "Team Check",          sub = "Skip players on your team" },
+        { key = "aimVisibleCheck", title = "Visible Check",       sub = "Skip targets behind walls (slower)" },
+    }
+
+    local order = 0
+    for _, d in ipairs(toggles) do
+        order += 1
+        local row, t, s = makeRow(panels.aim, order)
+        if t then t.Text = d.title end
+        if s then s.Text = d.sub end
+        buildToggle(row, d.key, state[d.key], function()
+            if refreshAimbot then refreshAimbot() end
+        end)
+    end
+
+    order += 1
+    local rowS, tS, sS = makeRow(panels.aim, order)
+    tS.Text = "Smoothness"; sS.Text = "1 = instant · higher = smoother"
+    buildSlider(rowS, "aimSmoothness", 1, 20, 1, "", nil, nil)
+
+    order += 1
+    local rowF, tF, sF = makeRow(panels.aim, order)
+    tF.Text = "FOV"; sF.Text = "screen radius around cursor (px)"
+    buildSlider(rowF, "aimFOV", 10, 600, 10, "px", nil, nil)
+
+    order += 1
+    local rowM, tM, sM = makeRow(panels.aim, order)
+    tM.Text = "Max Distance"; sM.Text = "targets beyond this are ignored"
+    buildSlider(rowM, "aimMaxDistance", 50, 2000, 50, "m", nil, nil)
+end
+rebuildAimbotTab()
+
 -- ---------- Output tab ----------
 local consoleFrame = new("Frame", {
     BackgroundTransparency = 1,
@@ -1146,7 +1203,7 @@ end)
 local espCache = {}
 local espConn  = nil
 local DRAWING_OK = (type(Drawing) == "table" and type(Drawing.new) == "function")
-local espGui = nil  -- fallback ScreenGui when Drawing is unavailable
+local espGui = nil
 
 local function getColorForPlayer(plr)
     if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
@@ -1175,6 +1232,13 @@ local function ensureEspGui()
             pcall(function() espGui.Parent = game:GetService("CoreGui") end)
         end
     end
+end
+
+local function hideAllRefs(entry)
+    for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+        if entry[k] then entry[k].Visible = false end
+    end
+    if entry.highlight then entry.highlight.Enabled = false end
 end
 
 local function buildESP(plr)
@@ -1295,7 +1359,7 @@ local function buildESP(plr)
             entry.highlight = nil
         end
         if state.espHighlight then
-            local hl = new("Highlight", {
+            entry.highlight = new("Highlight", {
                 FillColor = getColorForPlayer(plr),
                 FillTransparency = 0.6,
                 OutlineColor = getColorForPlayer(plr),
@@ -1303,16 +1367,11 @@ local function buildESP(plr)
                 DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
                 Parent = char,
             })
-            entry.highlight = hl
         end
     end
 
-    entry.charConn = plr.CharacterAdded:Connect(function(newChar)
-        bindHighlight(newChar)
-    end)
-    if plr.Character then
-        bindHighlight(plr.Character)
-    end
+    entry.charConn = plr.CharacterAdded:Connect(bindHighlight)
+    if plr.Character then bindHighlight(plr.Character) end
 
     espCache[plr] = entry
 end
@@ -1366,90 +1425,36 @@ local function updateESPForPlayer(plr, entry)
     if not camera then return end
 
     local char = plr.Character
-    if not char then
-        if entry.isDrawing then
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        else
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        end
-        if entry.highlight then entry.highlight.Enabled = false end
-        return
-    end
+    if not char then hideAllRefs(entry) return end
 
     local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
     local head = char:FindFirstChild("Head")
     local hum  = char:FindFirstChildOfClass("Humanoid")
 
     if not root or not head or not hum or hum.Health <= 0 then
-        if entry.isDrawing then
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        else
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        end
-        if entry.highlight then entry.highlight.Enabled = false end
-        return
+        hideAllRefs(entry) return
     end
 
-    -- team check
     if state.espTeamCheck and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
-        if entry.isDrawing then
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        else
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        end
-        if entry.highlight then entry.highlight.Enabled = false end
-        return
+        hideAllRefs(entry) return
     end
 
     local camPos = camera.CFrame.Position
     local dist = (root.Position - camPos).Magnitude
 
     if dist > state.espMaxDistance then
-        if entry.isDrawing then
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        else
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        end
-        if entry.highlight then entry.highlight.Enabled = false end
-        return
+        hideAllRefs(entry) return
     end
 
     local rootPos, onScreen = camera:WorldToViewportPoint(root.Position)
     local headPos = camera:WorldToViewportPoint(head.Position)
 
     if not onScreen or rootPos.Z <= 0 then
-        if entry.isDrawing then
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        else
-            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
-                if entry[k] then entry[k].Visible = false end
-            end
-        end
-        if entry.highlight then entry.highlight.Enabled = false end
-        return
+        hideAllRefs(entry) return
     end
 
     local color = getColorForPlayer(plr)
 
-    -- compute box
     local pixelHeight = math.clamp(2200 / math.max(dist, 1), 14, 260)
     local pixelWidth  = pixelHeight * 0.55
     local boxX = rootPos.X - pixelWidth / 2
@@ -1457,7 +1462,6 @@ local function updateESPForPlayer(plr, entry)
     local boxH = pixelHeight
     local boxW = pixelWidth
 
-    -- Ensure health bar is separate from box left
     local healthX = boxX - 6
     local healthY = boxY
     local healthH = boxH
@@ -1469,7 +1473,7 @@ local function updateESPForPlayer(plr, entry)
     end
 
     if entry.highlight then
-        entry.highlight.Enabled = state.espHighlight
+        entry.highlight.Enabled      = state.espHighlight
         entry.highlight.FillColor    = color
         entry.highlight.OutlineColor = color
     end
@@ -1517,29 +1521,28 @@ local function updateESPForPlayer(plr, entry)
             entry.tracer.To      = Vector2.new(boxX + boxW / 2, boxY + boxH)
         end
     else
-        -- Instance fallback
         if entry.box then
-            entry.box.Visible          = state.espBox
-            entry.box.Position         = UDim2.fromOffset(math.floor(boxX), math.floor(boxY))
-            entry.box.Size             = UDim2.fromOffset(math.floor(boxW), math.floor(boxH))
+            entry.box.Visible  = state.espBox
+            entry.box.Position = UDim2.fromOffset(math.floor(boxX), math.floor(boxY))
+            entry.box.Size     = UDim2.fromOffset(math.floor(boxW), math.floor(boxH))
             local s = entry.box:FindFirstChildOfClass("UIStroke")
             if s then s.Color = color end
         end
 
         if entry.name then
-            entry.name.Visible  = state.espName
-            entry.name.Text     = plr.Name
+            entry.name.Visible    = state.espName
+            entry.name.Text       = plr.Name
             entry.name.TextColor3 = color
-            entry.name.Position = UDim2.fromOffset(math.floor(boxX + boxW / 2 - 60), math.floor(boxY - 18))
-            entry.name.Size     = UDim2.fromOffset(120, 16)
+            entry.name.Position   = UDim2.fromOffset(math.floor(boxX + boxW / 2 - 60), math.floor(boxY - 18))
+            entry.name.Size       = UDim2.fromOffset(120, 16)
         end
 
         if entry.dist then
-            entry.dist.Visible  = state.espDistance
-            entry.dist.Text     = string.format("%dm", math.floor(dist + 0.5))
+            entry.dist.Visible    = state.espDistance
+            entry.dist.Text       = string.format("%dm", math.floor(dist + 0.5))
             entry.dist.TextColor3 = color
-            entry.dist.Position = UDim2.fromOffset(math.floor(boxX + boxW + 6), math.floor(boxY + boxH / 2 - 8))
-            entry.dist.Size     = UDim2.fromOffset(60, 16)
+            entry.dist.Position   = UDim2.fromOffset(math.floor(boxX + boxW + 6), math.floor(boxY + boxH / 2 - 8))
+            entry.dist.Size       = UDim2.fromOffset(60, 16)
         end
 
         if entry.healthBg then
@@ -1549,10 +1552,10 @@ local function updateESPForPlayer(plr, entry)
         end
 
         if entry.healthFill then
-            entry.healthFill.Visible  = state.espHealth
+            entry.healthFill.Visible          = state.espHealth
             entry.healthFill.BackgroundColor3 = healthPct > 0.5 and C.good or (healthPct > 0.25 and C.warn or C.bad)
-            entry.healthFill.Position = UDim2.fromOffset(math.floor(healthX), math.floor(healthY + healthH * (1 - healthPct)))
-            entry.healthFill.Size     = UDim2.fromOffset(healthW, math.floor(healthH * healthPct))
+            entry.healthFill.Position         = UDim2.fromOffset(math.floor(healthX), math.floor(healthY + healthH * (1 - healthPct)))
+            entry.healthFill.Size             = UDim2.fromOffset(healthW, math.floor(healthH * healthPct))
         end
 
         if entry.tracer then
@@ -1564,11 +1567,11 @@ local function updateESPForPlayer(plr, entry)
             local len = math.sqrt(dx * dx + dy * dy)
             local ang = math.atan2(dy, dx)
 
-            entry.tracer.Visible = state.espTracer
+            entry.tracer.Visible          = state.espTracer
             entry.tracer.BackgroundColor3 = color
-            entry.tracer.Position = UDim2.fromOffset(math.floor(fromX), math.floor(fromY))
-            entry.tracer.Size     = UDim2.fromOffset(math.floor(len), 1)
-            entry.tracer.Rotation = math.deg(ang)
+            entry.tracer.Position         = UDim2.fromOffset(math.floor(fromX), math.floor(fromY))
+            entry.tracer.Size             = UDim2.fromOffset(math.floor(len), 1)
+            entry.tracer.Rotation         = math.deg(ang)
         end
     end
 end
@@ -1616,7 +1619,6 @@ refreshESP = function()
     end
 end
 
--- Player lifecycle
 Players.PlayerAdded:Connect(function(plr)
     if state.espEnabled then
         buildESP(plr)
@@ -1626,6 +1628,168 @@ end)
 Players.PlayerRemoving:Connect(function(plr)
     destroyESP(plr)
 end)
+
+-- ============================================================
+-- 13.6 AIMBOT ENGINE
+-- ============================================================
+local aimBound   = false
+local AIM_BIND_NAME = "FPSBoosterAimbotUpdate"
+local aimHeldLeft  = false
+local aimHeldRight = false
+local aimHeldTouch = false
+
+-- Track hold state on LMB / RMB / Touch
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        aimHeldLeft = true
+    elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aimHeldRight = true
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        aimHeldTouch = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        aimHeldLeft = false
+    elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+        aimHeldRight = false
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        aimHeldTouch = false
+    end
+end)
+
+local function aimKeyActive()
+    if state.aimUseLeft  and aimHeldLeft  then return true end
+    if state.aimUseRight and aimHeldRight then return true end
+    -- Touch works with either toggle (mobile-friendly)
+    if aimHeldTouch and (state.aimUseLeft or state.aimUseRight) then return true end
+    return false
+end
+
+local function isTargetVisible(targetPart)
+    local camera = workspace.CurrentCamera
+    if not camera then return false end
+    local origin = camera.CFrame.Position
+    local dir = targetPart.Position - origin
+    local params = RaycastParams.new()
+    params.FilterType = RAY_EXCLUDE
+    params.FilterDescendantsInstances = {
+        LocalPlayer.Character,
+        targetPart.Parent,
+    }
+    local hit = workspace:Raycast(origin, dir, params)
+    return hit == nil
+end
+
+local function pickAimTarget()
+    local camera = workspace.CurrentCamera
+    if not camera then return nil end
+
+    local mousePos = UserInputService:GetMouseLocation()
+    local fovPx = state.aimFOV
+    local best, bestScore = nil, math.huge
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local skip = false
+
+            if state.aimTeamCheck and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
+                skip = true
+            end
+
+            if not skip then
+                local char = plr.Character
+                if char then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 then
+                        local partName = state.aimTargetHead and "Head" or "HumanoidRootPart"
+                        local part = char:FindFirstChild(partName) or char:FindFirstChild("HumanoidRootPart")
+                        if part then
+                            local sp, onScreen = camera:WorldToViewportPoint(part.Position)
+                            if onScreen and sp.Z > 0 then
+                                local dist3D = (part.Position - camera.CFrame.Position).Magnitude
+                                if dist3D <= state.aimMaxDistance then
+                                    local dist2D = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
+                                    if dist2D <= fovPx then
+                                        if not state.aimVisibleCheck or isTargetVisible(part) then
+                                            -- Score: 2D distance (closest to cursor wins)
+                                            local score = dist2D
+                                            if score < bestScore then
+                                                bestScore = score
+                                                best = { plr = plr, part = part, pos = sp }
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+local function applyAimToTarget(target)
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local camPos = camera.CFrame.Position
+    local goalPos = target.part.Position
+
+    -- Guard against degenerate cases
+    local dir = goalPos - camPos
+    if dir.Magnitude < 0.05 then return end
+
+    local goalCF = CFrame.new(camPos, camPos + dir.Unit)
+
+    local smooth = math.max(tonumber(state.aimSmoothness) or 1, 1)
+    if smooth <= 1 then
+        camera.CFrame = goalCF
+    else
+        local alpha = 1 / smooth
+        camera.CFrame = camera.CFrame:Lerp(goalCF, alpha)
+    end
+end
+
+local function updateAimbot(dt)
+    if not state.aimEnabled then return end
+    if not aimKeyActive() then return end
+
+    local target = pickAimTarget()
+    if not target then return end
+
+    applyAimToTarget(target)
+end
+
+local function startAimbot()
+    if aimBound then return end
+    aimBound = true
+    -- Bind after the camera script so our CFrame write wins for the frame
+    pcall(function()
+        RunService:BindToRenderStep(AIM_BIND_NAME,
+            Enum.RenderPriority.Camera.Value + 1,
+            updateAimbot)
+    end)
+end
+
+local function stopAimbot()
+    if not aimBound then return end
+    aimBound = false
+    pcall(function() RunService:UnbindFromRenderStep(AIM_BIND_NAME) end)
+end
+
+refreshAimbot = function()
+    if state.aimEnabled then
+        startAimbot()
+    else
+        stopAimbot()
+    end
+end
 
 -- ============================================================
 -- 13. APPLY / RESET
@@ -1708,6 +1872,20 @@ btnApply.MouseButton1Click:Connect(function()
     end
     refreshESP()
 
+    -- Aimbot integration
+    if state.aimEnabled then
+        local keys = {}
+        if state.aimUseLeft  then table.insert(keys, "LMB") end
+        if state.aimUseRight then table.insert(keys, "RMB") end
+        local keyStr = #keys > 0 and table.concat(keys, "+") or "none"
+        logLine("Aimbot enabled (hold " .. keyStr .. ", FOV " ..
+            tostring(state.aimFOV) .. "px, smooth " ..
+            tostring(state.aimSmoothness) .. ")", "ok")
+    else
+        logLine("Aimbot disabled.", "dim")
+    end
+    refreshAimbot()
+
     if not applied then
         applied = true
         refreshLightingLoop()
@@ -1717,15 +1895,15 @@ end)
 btnReset.MouseButton1Click:Connect(function()
     for k, v in pairs(DEFAULTS) do state[k] = v end
 
-    -- Stop ESP before resetting UI
+    -- Stop ESP + aimbot before resetting UI
     stopESP()
     destroyAllESP()
+    stopAimbot()
 
-    -- Rebuild Main tab in place
+    -- Rebuild tabs in place
     rebuildMainTab()
-
-    -- Rebuild ESP tab in place
     rebuildESPTab()
+    rebuildAimbotTab()
 
     selectTab("log")
     logLine("Configuration reset to defaults.", "warn")
@@ -1742,7 +1920,6 @@ end)
 if not parentOk then
     warn("[FPS Booster] Failed to parent to " .. tostring(uiParentName) .. ": " .. tostring(parentErr))
 
-    -- Fallback chain
     local fallbacks = {
         { name = "gethui",   getter = function()
             if type(gethui) == "function" then
@@ -1790,11 +1967,12 @@ if not parentOk then
     return
 end
 
--- Cleanup hook so ESP teardown runs if the gui is destroyed externally
+-- Cleanup hook
 gui.AncestryChanged:Connect(function(_, parent)
     if not parent then
         stopESP()
         destroyAllESP()
+        stopAimbot()
     end
 end)
 
@@ -1803,7 +1981,7 @@ end)
 -- ============================================================
 selectTab("main")
 
-logLine("FPS Booster v1.3 loaded.", "ok")
+logLine("FPS Booster v1.4 loaded.", "ok")
 logLine("UI parent: " .. tostring(uiParentName), "dim")
 logLine("Ready. Configure options and press Apply.", "dim")
 logLine("Tip: drag the title bar to reposition this window.", "dim")
