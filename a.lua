@@ -1,7 +1,9 @@
 -- ============================================================
---  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [v1.2 DELTA-SAFE]
+--  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [v1.3 DELTA-SAFE]
 --  Robust UI parenting + boot guard + debug output + fallbacks.
 --  Requires an executor (tested target: Delta on mobile).
+--  v1.3: added Player ESP tab (Box / Name / Distance / Health /
+--        Tracer / Highlight / Team Check / Max Distance).
 -- ============================================================
 
 -- ============================================================
@@ -13,7 +15,7 @@ if _G.__FPS_BOOSTER_INSTANCE then
 end
 
 print("=========================================")
-print("[FPS Booster] Starting up (v1.2)...")
+print("[FPS Booster] Starting up (v1.3)...")
 print("=========================================")
 
 -- ============================================================
@@ -115,6 +117,7 @@ end
 -- 3. CONFIG & STATE
 -- ============================================================
 local DEFAULTS = {
+    -- optimization
     disablePostFX    = true,
     disableParticles = true,
     flattenMaterials = true,
@@ -124,6 +127,16 @@ local DEFAULTS = {
     fpsCap           = 120,
     startDelay       = 3,
     batchSize        = 250,
+    -- esp
+    espEnabled       = false,
+    espBox           = true,
+    espName          = true,
+    espDistance      = true,
+    espHealth        = true,
+    espTracer        = false,
+    espTeamCheck     = true,
+    espHighlight     = true,
+    espMaxDistance   = 500,
 }
 
 local state = {}
@@ -145,6 +158,10 @@ local C = {
     track     = Color3.fromRGB(40, 44, 56),
     chipBg    = Color3.fromRGB(28, 31, 41),
     line      = Color3.fromRGB(255, 255, 255),
+    -- esp
+    espEnemy   = Color3.fromRGB(255, 92, 92),
+    espAlly    = Color3.fromRGB(61, 220, 132),
+    espNeutral = Color3.fromRGB(255, 196, 77),
 }
 
 -- ============================================================
@@ -496,7 +513,7 @@ new("TextLabel", {
     Position = UDim2.new(0, 60, 0, 28),
     Size = UDim2.new(1, -140, 0, 14),
     Font = Enum.Font.Gotham,
-    Text = "client-side · v1.2",
+    Text = "client-side · v1.3",
     TextColor3 = C.muted,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -557,14 +574,16 @@ new("Frame", {
 }, { tabBar })
 
 local tabs = {}
-local tabNames = { "Main", "Performance", "Output" }
-local tabKeys  = { "main", "perf", "log" }
+local tabNames = { "Main", "Performance", "ESP", "Output" }
+local tabKeys  = { "main", "perf", "esp", "log" }
+local TAB_COUNT = #tabNames
+local TAB_W = 1 / TAB_COUNT
 
 for i, name in ipairs(tabNames) do
     local tab = new("TextButton", {
         BackgroundTransparency = 1,
-        Position = UDim2.new(0, (i - 1) * 110, 0, 0),
-        Size = UDim2.new(0, 110, 1, 0),
+        Position = UDim2.new(TAB_W * (i - 1), 0, 0, 0),
+        Size = UDim2.new(TAB_W, 0, 1, 0),
         Font = Enum.Font.GothamBold,
         Text = name,
         TextColor3 = C.muted,
@@ -673,7 +692,7 @@ local function makeRow(parent, order)
     return row, title, sub
 end
 
-local function buildToggle(row, key, initial)
+local function buildToggle(row, key, initial, onChange)
     local track = new("TextButton", {
         BackgroundColor3 = initial and C.accent or C.track,
         Position = UDim2.new(1, -60, 0.5, -12),
@@ -707,6 +726,7 @@ local function buildToggle(row, key, initial)
     track.MouseButton1Click:Connect(function()
         state[key] = not state[key]
         setVisual(state[key])
+        if onChange then onChange(state[key]) end
     end)
 
     return function()
@@ -715,7 +735,7 @@ local function buildToggle(row, key, initial)
     end
 end
 
-local function buildSlider(row, key, min, max, step, suffix, formatFn)
+local function buildSlider(row, key, min, max, step, suffix, formatFn, onChange)
     local valueLbl = new("TextLabel", {
         BackgroundColor3 = Color3.fromRGB(255, 255, 255),
         BackgroundTransparency = 0.94,
@@ -767,13 +787,14 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         return tostring(v) .. (suffix or "")
     end
 
-    local function setValue(v)
+    local function setValue(v, fire)
         v = math.clamp(v, min, max)
         state[key] = v
         local alpha = (v - min) / (max - min)
         fill.Size = UDim2.new(alpha, 0, 1, 0)
         knob.Position = UDim2.new(alpha, 0, 0.5, 0)
         valueLbl.Text = fmt(v)
+        if fire and onChange then onChange(v) end
     end
 
     local dragging = false
@@ -782,7 +803,7 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         rel = math.clamp(rel, 0, 1)
         local raw = min + rel * (max - min)
         local snapped = math.floor((raw + step / 2) / step) * step
-        setValue(snapped)
+        setValue(snapped, true)
     end
 
     sliderBg.InputBegan:Connect(function(input)
@@ -805,15 +826,18 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn)
         end
     end)
 
-    setValue(DEFAULTS[key])
+    setValue(DEFAULTS[key], false)
 
     return function()
-        setValue(DEFAULTS[key])
+        setValue(DEFAULTS[key], false)
     end
 end
 
 -- ---------- Main tab ----------
-do
+local function rebuildMainTab()
+    for _, child in ipairs(panels.main:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
     local defs = {
         { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom - Blur - SunRays - ColorCorrection" },
         { key = "disableParticles", title = "Disable Particles",     sub = "ParticleEmitter - Trail - Fire - Smoke" },
@@ -824,32 +848,73 @@ do
         local row, t, s = makeRow(panels.main, i)
         if t then t.Text = d.title end
         if s then s.Text = d.sub end
-        buildToggle(row, d.key, state[d.key])
+        buildToggle(row, d.key, state[d.key], nil)
     end
 end
+rebuildMainTab()
 
 -- ---------- Performance tab ----------
 do
     local row1, t1, s1 = makeRow(panels.perf, 1)
     t1.Text = "FPS Cap"; s1.Text = "setfpscap(value)"
-    buildSlider(row1, "fpsCap", 30, 240, 10, "", nil)
+    buildSlider(row1, "fpsCap", 30, 240, 10, "", nil, nil)
 
     local row2, t2, s2 = makeRow(panels.perf, 2)
     t2.Text = "Start Delay"; s2.Text = "task.wait(seconds)"
-    buildSlider(row2, "startDelay", 0, 10, 1, "s", nil)
+    buildSlider(row2, "startDelay", 0, 10, 1, "s", nil, nil)
 
     local row3, t3, s3 = makeRow(panels.perf, 3)
     t3.Text = "Batch Size"; s3.Text = "objects per task.wait()"
-    buildSlider(row3, "batchSize", 50, 1000, 50, "", nil)
+    buildSlider(row3, "batchSize", 50, 1000, 50, "", nil, nil)
 
     local row4, t4, s4 = makeRow(panels.perf, 4)
     t4.Text = "Optimize Terrain Water"; s4.Text = "WaveSize 0 - Reflectance 0"
-    buildToggle(row4, "optimizeTerrain", state.optimizeTerrain)
+    buildToggle(row4, "optimizeTerrain", state.optimizeTerrain, nil)
 
     local row5, t5, s5 = makeRow(panels.perf, 5)
     t5.Text = "Disable Global Shadows"; s5.Text = "Lighting.GlobalShadows = false"
-    buildToggle(row5, "globalShadowsOff", state.globalShadowsOff)
+    buildToggle(row5, "globalShadowsOff", state.globalShadowsOff, nil)
 end
+
+-- ---------- ESP tab ----------
+local refreshESP  -- forward declaration (assigned in §13.5)
+local rebuildESPTab
+
+rebuildESPTab = function()
+    for _, child in ipairs(panels.esp:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+
+    local defs = {
+        { key = "espEnabled",    title = "Enable ESP",             sub = "Master toggle for the ESP overlay" },
+        { key = "espBox",        title = "Box",                    sub = "2D bounding box around character" },
+        { key = "espName",       title = "Name",                   sub = "Player name above the box" },
+        { key = "espDistance",   title = "Distance",               sub = "Studs to target (right of box)" },
+        { key = "espHealth",     title = "Health Bar",             sub = "Vertical bar left of the box" },
+        { key = "espTracer",     title = "Tracer",                 sub = "Line from screen bottom to target" },
+        { key = "espHighlight",  title = "Highlight (through walls)", sub = "Roblox Highlight instance outline" },
+        { key = "espTeamCheck",  title = "Team Check",             sub = "Skip players on your team" },
+    }
+
+    local order = 0
+    for _, d in ipairs(defs) do
+        order += 1
+        local row, t, s = makeRow(panels.esp, order)
+        if t then t.Text = d.title end
+        if s then s.Text = d.sub end
+        buildToggle(row, d.key, state[d.key], function()
+            if refreshESP then refreshESP() end
+        end)
+    end
+
+    order += 1
+    local rowD, tD, sD = makeRow(panels.esp, order)
+    tD.Text = "Max Distance"; sD.Text = "players beyond this are skipped"
+    buildSlider(rowD, "espMaxDistance", 50, 5000, 50, "m", nil, function()
+        if refreshESP then refreshESP() end
+    end)
+end
+rebuildESPTab()
 
 -- ---------- Output tab ----------
 local consoleFrame = new("Frame", {
@@ -1011,20 +1076,20 @@ end
 -- ============================================================
 -- 11. DRAGGING
 -- ============================================================
-local dragging = false
+local draggingWindow = false
 local dragStart, startPos
 
 titlebar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
+        draggingWindow = true
         dragStart = input.Position
         startPos = window.Position
     end
 end)
 
 titlebar.InputChanged:Connect(function(input)
-    if not dragging then return end
+    if not draggingWindow then return end
     if input.UserInputType == Enum.UserInputType.MouseMovement
        or input.UserInputType == Enum.UserInputType.Touch then
         local delta = input.Position - dragStart
@@ -1038,7 +1103,7 @@ end)
 titlebar.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
+        draggingWindow = false
     end
 end)
 
@@ -1073,6 +1138,493 @@ end)
 chip.MouseButton1Click:Connect(function()
     window.Visible = true
     chip.Visible = false
+end)
+
+-- ============================================================
+-- 13.5 ESP ENGINE
+-- ============================================================
+local espCache = {}
+local espConn  = nil
+local DRAWING_OK = (type(Drawing) == "table" and type(Drawing.new) == "function")
+local espGui = nil  -- fallback ScreenGui when Drawing is unavailable
+
+local function getColorForPlayer(plr)
+    if plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
+        return C.espAlly
+    elseif plr.Team then
+        return C.espEnemy
+    else
+        return C.espNeutral
+    end
+end
+
+local function ensureEspGui()
+    if DRAWING_OK then return end
+    if espGui and espGui.Parent then return end
+    espGui = new("ScreenGui", {
+        Name = "FPSBooster_ESP",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        DisplayOrder = 9998,
+        Enabled = true,
+    })
+    if espGui then
+        local ok = pcall(function() espGui.Parent = uiParent end)
+        if not ok then
+            pcall(function() espGui.Parent = game:GetService("CoreGui") end)
+        end
+    end
+end
+
+local function buildESP(plr)
+    if espCache[plr] then return end
+    if plr == LocalPlayer then return end
+
+    local entry = { isDrawing = DRAWING_OK }
+
+    if DRAWING_OK then
+        local function newDraw(kind)
+            local ok, obj = pcall(Drawing.new, kind)
+            if ok then
+                obj.Visible = false
+                return obj
+            end
+            return nil
+        end
+
+        entry.box = newDraw("Square")
+        if entry.box then
+            entry.box.Thickness = 1
+            entry.box.Filled    = false
+        end
+
+        entry.name = newDraw("Text")
+        if entry.name then
+            entry.name.Center  = true
+            entry.name.Outline = true
+            entry.name.Size    = 14
+        end
+
+        entry.dist = newDraw("Text")
+        if entry.dist then
+            entry.dist.Center  = false
+            entry.dist.Outline = true
+            entry.dist.Size    = 12
+        end
+
+        entry.healthBg = newDraw("Square")
+        if entry.healthBg then
+            entry.healthBg.Filled = true
+            entry.healthBg.Color  = Color3.new(0, 0, 0)
+        end
+
+        entry.healthFill = newDraw("Square")
+        if entry.healthFill then
+            entry.healthFill.Filled = true
+            entry.healthFill.Color  = C.good
+        end
+
+        entry.tracer = newDraw("Line")
+        if entry.tracer then
+            entry.tracer.Thickness = 1
+        end
+    else
+        ensureEspGui()
+        if espGui then
+            entry.box = new("Frame", {
+                BackgroundTransparency = 1,
+                BorderSizePixel = 0,
+                Visible = false,
+                ZIndex = 5,
+            }, { espGui })
+            if entry.box then
+                stroke(Color3.new(1, 1, 1), 0, 1, entry.box)
+            end
+
+            entry.name = new("TextLabel", {
+                BackgroundTransparency = 1,
+                Font = Enum.Font.GothamBold,
+                Text = plr.Name,
+                TextColor3 = Color3.new(1, 1, 1),
+                TextSize = 14,
+                TextStrokeTransparency = 0,
+                Visible = false,
+                ZIndex = 6,
+            }, { espGui })
+
+            entry.dist = new("TextLabel", {
+                BackgroundTransparency = 1,
+                Font = Enum.Font.Code,
+                Text = "",
+                TextColor3 = Color3.new(1, 1, 1),
+                TextSize = 12,
+                TextStrokeTransparency = 0,
+                Visible = false,
+                ZIndex = 6,
+            }, { espGui })
+
+            entry.healthBg = new("Frame", {
+                BackgroundColor3 = Color3.new(0, 0, 0),
+                BorderSizePixel = 0,
+                Visible = false,
+                ZIndex = 5,
+            }, { espGui })
+
+            entry.healthFill = new("Frame", {
+                BackgroundColor3 = C.good,
+                BorderSizePixel = 0,
+                Visible = false,
+                ZIndex = 6,
+            }, { espGui })
+
+            entry.tracer = new("Frame", {
+                BackgroundColor3 = Color3.new(1, 1, 1),
+                BorderSizePixel = 0,
+                Visible = false,
+                ZIndex = 5,
+                AnchorPoint = Vector2.new(0, 0.5),
+            }, { espGui })
+        end
+    end
+
+    local function bindHighlight(char)
+        if not char then return end
+        if entry.highlight then
+            pcall(function() entry.highlight:Destroy() end)
+            entry.highlight = nil
+        end
+        if state.espHighlight then
+            local hl = new("Highlight", {
+                FillColor = getColorForPlayer(plr),
+                FillTransparency = 0.6,
+                OutlineColor = getColorForPlayer(plr),
+                OutlineTransparency = 0,
+                DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+                Parent = char,
+            })
+            entry.highlight = hl
+        end
+    end
+
+    entry.charConn = plr.CharacterAdded:Connect(function(newChar)
+        bindHighlight(newChar)
+    end)
+    if plr.Character then
+        bindHighlight(plr.Character)
+    end
+
+    espCache[plr] = entry
+end
+
+local function destroyESP(plr)
+    local entry = espCache[plr]
+    if not entry then return end
+
+    if entry.charConn then
+        pcall(function() entry.charConn:Disconnect() end)
+    end
+    if entry.highlight then
+        pcall(function() entry.highlight:Destroy() end)
+    end
+
+    if entry.isDrawing then
+        for _, key in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+            local obj = entry[key]
+            if obj and type(obj.Remove) == "function" then
+                pcall(function() obj:Remove() end)
+            end
+        end
+    else
+        for _, key in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+            local obj = entry[key]
+            if obj then
+                pcall(function() obj:Destroy() end)
+            end
+        end
+    end
+
+    espCache[plr] = nil
+end
+
+local function destroyAllESP()
+    local players = {}
+    for plr in pairs(espCache) do
+        table.insert(players, plr)
+    end
+    for _, plr in ipairs(players) do
+        destroyESP(plr)
+    end
+    if espGui then
+        pcall(function() espGui:Destroy() end)
+        espGui = nil
+    end
+end
+
+local function updateESPForPlayer(plr, entry)
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local char = plr.Character
+    if not char then
+        if entry.isDrawing then
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        else
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        end
+        if entry.highlight then entry.highlight.Enabled = false end
+        return
+    end
+
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+    local head = char:FindFirstChild("Head")
+    local hum  = char:FindFirstChildOfClass("Humanoid")
+
+    if not root or not head or not hum or hum.Health <= 0 then
+        if entry.isDrawing then
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        else
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        end
+        if entry.highlight then entry.highlight.Enabled = false end
+        return
+    end
+
+    -- team check
+    if state.espTeamCheck and plr.Team and LocalPlayer.Team and plr.Team == LocalPlayer.Team then
+        if entry.isDrawing then
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        else
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        end
+        if entry.highlight then entry.highlight.Enabled = false end
+        return
+    end
+
+    local camPos = camera.CFrame.Position
+    local dist = (root.Position - camPos).Magnitude
+
+    if dist > state.espMaxDistance then
+        if entry.isDrawing then
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        else
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        end
+        if entry.highlight then entry.highlight.Enabled = false end
+        return
+    end
+
+    local rootPos, onScreen = camera:WorldToViewportPoint(root.Position)
+    local headPos = camera:WorldToViewportPoint(head.Position)
+
+    if not onScreen or rootPos.Z <= 0 then
+        if entry.isDrawing then
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        else
+            for _, k in ipairs({ "box", "name", "dist", "healthBg", "healthFill", "tracer" }) do
+                if entry[k] then entry[k].Visible = false end
+            end
+        end
+        if entry.highlight then entry.highlight.Enabled = false end
+        return
+    end
+
+    local color = getColorForPlayer(plr)
+
+    -- compute box
+    local pixelHeight = math.clamp(2200 / math.max(dist, 1), 14, 260)
+    local pixelWidth  = pixelHeight * 0.55
+    local boxX = rootPos.X - pixelWidth / 2
+    local boxY = headPos.Y
+    local boxH = pixelHeight
+    local boxW = pixelWidth
+
+    -- Ensure health bar is separate from box left
+    local healthX = boxX - 6
+    local healthY = boxY
+    local healthH = boxH
+    local healthW = 3
+
+    local healthPct = 0
+    if hum and hum.MaxHealth > 0 then
+        healthPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+    end
+
+    if entry.highlight then
+        entry.highlight.Enabled = state.espHighlight
+        entry.highlight.FillColor    = color
+        entry.highlight.OutlineColor = color
+    end
+
+    if entry.isDrawing then
+        if entry.box then
+            entry.box.Visible  = state.espBox
+            entry.box.Color    = color
+            entry.box.Size     = Vector2.new(boxW, boxH)
+            entry.box.Position = Vector2.new(boxX, boxY)
+        end
+
+        if entry.name then
+            entry.name.Visible  = state.espName
+            entry.name.Text     = plr.Name
+            entry.name.Color    = color
+            entry.name.Position = Vector2.new(boxX + boxW / 2, boxY - 16)
+        end
+
+        if entry.dist then
+            entry.dist.Visible  = state.espDistance
+            entry.dist.Text     = string.format("%dm", math.floor(dist + 0.5))
+            entry.dist.Color    = color
+            entry.dist.Position = Vector2.new(boxX + boxW + 6, boxY + boxH / 2 - 6)
+        end
+
+        if entry.healthBg then
+            entry.healthBg.Visible  = state.espHealth
+            entry.healthBg.Color    = Color3.fromRGB(20, 20, 20)
+            entry.healthBg.Size     = Vector2.new(healthW, healthH)
+            entry.healthBg.Position = Vector2.new(healthX, healthY)
+        end
+
+        if entry.healthFill then
+            entry.healthFill.Visible  = state.espHealth
+            entry.healthFill.Color    = healthPct > 0.5 and C.good or (healthPct > 0.25 and C.warn or C.bad)
+            entry.healthFill.Size     = Vector2.new(healthW, healthH * healthPct)
+            entry.healthFill.Position = Vector2.new(healthX, healthY + healthH * (1 - healthPct))
+        end
+
+        if entry.tracer then
+            entry.tracer.Visible = state.espTracer
+            entry.tracer.Color   = color
+            entry.tracer.From    = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y)
+            entry.tracer.To      = Vector2.new(boxX + boxW / 2, boxY + boxH)
+        end
+    else
+        -- Instance fallback
+        if entry.box then
+            entry.box.Visible          = state.espBox
+            entry.box.Position         = UDim2.fromOffset(math.floor(boxX), math.floor(boxY))
+            entry.box.Size             = UDim2.fromOffset(math.floor(boxW), math.floor(boxH))
+            local s = entry.box:FindFirstChildOfClass("UIStroke")
+            if s then s.Color = color end
+        end
+
+        if entry.name then
+            entry.name.Visible  = state.espName
+            entry.name.Text     = plr.Name
+            entry.name.TextColor3 = color
+            entry.name.Position = UDim2.fromOffset(math.floor(boxX + boxW / 2 - 60), math.floor(boxY - 18))
+            entry.name.Size     = UDim2.fromOffset(120, 16)
+        end
+
+        if entry.dist then
+            entry.dist.Visible  = state.espDistance
+            entry.dist.Text     = string.format("%dm", math.floor(dist + 0.5))
+            entry.dist.TextColor3 = color
+            entry.dist.Position = UDim2.fromOffset(math.floor(boxX + boxW + 6), math.floor(boxY + boxH / 2 - 8))
+            entry.dist.Size     = UDim2.fromOffset(60, 16)
+        end
+
+        if entry.healthBg then
+            entry.healthBg.Visible  = state.espHealth
+            entry.healthBg.Position = UDim2.fromOffset(math.floor(healthX), math.floor(healthY))
+            entry.healthBg.Size     = UDim2.fromOffset(healthW, math.floor(healthH))
+        end
+
+        if entry.healthFill then
+            entry.healthFill.Visible  = state.espHealth
+            entry.healthFill.BackgroundColor3 = healthPct > 0.5 and C.good or (healthPct > 0.25 and C.warn or C.bad)
+            entry.healthFill.Position = UDim2.fromOffset(math.floor(healthX), math.floor(healthY + healthH * (1 - healthPct)))
+            entry.healthFill.Size     = UDim2.fromOffset(healthW, math.floor(healthH * healthPct))
+        end
+
+        if entry.tracer then
+            local fromX = camera.ViewportSize.X / 2
+            local fromY = camera.ViewportSize.Y
+            local toX   = boxX + boxW / 2
+            local toY   = boxY + boxH
+            local dx, dy = toX - fromX, toY - fromY
+            local len = math.sqrt(dx * dx + dy * dy)
+            local ang = math.atan2(dy, dx)
+
+            entry.tracer.Visible = state.espTracer
+            entry.tracer.BackgroundColor3 = color
+            entry.tracer.Position = UDim2.fromOffset(math.floor(fromX), math.floor(fromY))
+            entry.tracer.Size     = UDim2.fromOffset(math.floor(len), 1)
+            entry.tracer.Rotation = math.deg(ang)
+        end
+    end
+end
+
+local function renderESP()
+    if not state.espEnabled then return end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if not espCache[plr] then
+                buildESP(plr)
+            end
+            local entry = espCache[plr]
+            if entry then
+                pcall(updateESPForPlayer, plr, entry)
+            end
+        end
+    end
+end
+
+local function startESP()
+    if espConn then return end
+    ensureEspGui()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            buildESP(plr)
+        end
+    end
+    espConn = RunService.RenderStepped:Connect(renderESP)
+end
+
+local function stopESP()
+    if espConn then
+        pcall(function() espConn:Disconnect() end)
+        espConn = nil
+    end
+end
+
+refreshESP = function()
+    destroyAllESP()
+    if state.espEnabled then
+        startESP()
+    else
+        stopESP()
+    end
+end
+
+-- Player lifecycle
+Players.PlayerAdded:Connect(function(plr)
+    if state.espEnabled then
+        buildESP(plr)
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(plr)
+    destroyESP(plr)
 end)
 
 -- ============================================================
@@ -1143,6 +1695,19 @@ btnApply.MouseButton1Click:Connect(function()
         toast("FPS Booster", "Optimizations applied. FPS should be improved.")
     end)
 
+    -- ESP integration
+    if state.espEnabled then
+        logLine("ESP enabled (maxDistance=" .. tostring(state.espMaxDistance) .. "m)", "ok")
+        if DRAWING_OK then
+            logLine("ESP backend: Drawing API", "dim")
+        else
+            logLine("ESP backend: ScreenGui fallback", "warn")
+        end
+    else
+        logLine("ESP disabled.", "dim")
+    end
+    refreshESP()
+
     if not applied then
         applied = true
         refreshLightingLoop()
@@ -1152,22 +1717,15 @@ end)
 btnReset.MouseButton1Click:Connect(function()
     for k, v in pairs(DEFAULTS) do state[k] = v end
 
-    -- Rebuild Main tab in place
-    for _, child in ipairs(panels.main:GetChildren()) do
-        if child:IsA("Frame") then child:Destroy() end
-    end
+    -- Stop ESP before resetting UI
+    stopESP()
+    destroyAllESP()
 
-    local mainDefs = {
-        { key = "disablePostFX",    title = "Disable Post-Effects",  sub = "Bloom - Blur - SunRays - ColorCorrection" },
-        { key = "disableParticles", title = "Disable Particles",     sub = "ParticleEmitter - Trail - Fire - Smoke" },
-        { key = "flattenMaterials", title = "Flatten Materials",     sub = "Plastic - Reflectance 0 - CastShadow off" },
-        { key = "removeTextures",   title = "Remove Textures",       sub = "Decal - Texture - Transparency = 1" },
-    }
-    for i, d in ipairs(mainDefs) do
-        local row, t, s = makeRow(panels.main, i)
-        t.Text = d.title; s.Text = d.sub
-        buildToggle(row, d.key, state[d.key])
-    end
+    -- Rebuild Main tab in place
+    rebuildMainTab()
+
+    -- Rebuild ESP tab in place
+    rebuildESPTab()
 
     selectTab("log")
     logLine("Configuration reset to defaults.", "warn")
@@ -1232,12 +1790,20 @@ if not parentOk then
     return
 end
 
+-- Cleanup hook so ESP teardown runs if the gui is destroyed externally
+gui.AncestryChanged:Connect(function(_, parent)
+    if not parent then
+        stopESP()
+        destroyAllESP()
+    end
+end)
+
 -- ============================================================
 -- 15. BOOT
 -- ============================================================
 selectTab("main")
 
-logLine("FPS Booster v1.2 loaded.", "ok")
+logLine("FPS Booster v1.3 loaded.", "ok")
 logLine("UI parent: " .. tostring(uiParentName), "dim")
 logLine("Ready. Configure options and press Apply.", "dim")
 logLine("Tip: drag the title bar to reposition this window.", "dim")
@@ -1249,3 +1815,4 @@ end)
 print("[FPS Booster] ✅ UI loaded successfully.")
 print("[FPS Booster] GUI parent: " .. tostring(uiParentName))
 print("[FPS Booster] GUI name: " .. gui.Name)
+print("[FPS Booster] ESP backend: " .. (DRAWING_OK and "Drawing API" or "ScreenGui fallback"))
