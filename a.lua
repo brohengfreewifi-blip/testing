@@ -1,121 +1,103 @@
 -- ============================================================
---  FPS BOOSTER — Client-Side Menu (Roblox Lua)  [v1.4 DELTA-SAFE]
---  Robust UI parenting + boot guard + debug output + fallbacks.
+--  FPS BOOSTER -- Client-Side Menu (Roblox Lua)  [v1.4 FIXED]
+--  ASCII-only, error-guarded, Delta-safe.
 --  Requires an executor (tested target: Delta on mobile).
---  v1.3: added Player ESP tab (Box / Name / Distance / Health /
---        Tracer / Highlight / Team Check / Max Distance).
---  v1.4: added Aimbot tab (LMB/RMB hold, FOV, smoothness,
---        target part, team check, visibility check).
 -- ============================================================
 
--- ============================================================
--- 0. GUARD — remove previous instance if re-executed
--- ============================================================
+local function MAIN()
+
+print("=========================================")
+print("[FPS Booster] Starting up (v1.4 FIXED)...")
+print("=========================================")
+
+-- 0. GUARD -----------------------------------------------------
 if _G.__FPS_BOOSTER_INSTANCE then
     pcall(function() _G.__FPS_BOOSTER_INSTANCE:Destroy() end)
     _G.__FPS_BOOSTER_INSTANCE = nil
 end
 
-print("=========================================")
-print("[FPS Booster] Starting up (v1.4)...")
-print("=========================================")
-
--- ============================================================
--- 1. SERVICES & BOOT GUARD
--- ============================================================
+-- 1. SERVICES --------------------------------------------------
 local Players          = game:GetService("Players")
 local Lighting         = game:GetService("Lighting")
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService       = game:GetService("RunService")
+local StarterGui       = game:GetService("StarterGui")
 
--- Wait for the game to load — Delta often injects before the client is ready
+print("[FPS Booster] Services OK")
+
+-- Bounded wait for game to load
 if not game:IsLoaded() then
-    print("[FPS Booster] Waiting for game to load...")
-    pcall(function() game.Loaded:Wait() end)
+    print("[FPS Booster] Waiting for game to load (max 5s)...")
+    local t0 = os.clock()
+    while not game:IsLoaded() and (os.clock() - t0) < 5 do
+        task.wait(0.1)
+    end
 end
 
--- Give Delta's injection pipeline a moment to settle
-task.wait(0.75)
+task.wait(0.5)
 
--- Wait for LocalPlayer (Delta sometimes injects before it exists)
+-- Wait for LocalPlayer with timeout
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
     print("[FPS Booster] Waiting for LocalPlayer...")
-    local timeout = 15
-    local start = tick()
+    local t0 = os.clock()
     repeat
         task.wait(0.1)
         LocalPlayer = Players.LocalPlayer
-    until LocalPlayer or (tick() - start) > timeout
+    until LocalPlayer or (os.clock() - t0) > 15
 end
 
 if not LocalPlayer then
-    warn("[FPS Booster] ❌ LocalPlayer never appeared. Aborting.")
+    warn("[FPS Booster] FAIL: LocalPlayer never appeared. Aborting.")
     return
 end
 
 print("[FPS Booster] LocalPlayer ready: " .. LocalPlayer.Name)
 
--- ============================================================
--- 2. DELTA-SAFE UI PARENT RESOLVER
--- ============================================================
+-- 2. UI PARENT RESOLVER ----------------------------------------
+local function isValidInstance(x)
+    local ok, t = pcall(function() return typeof(x) end)
+    return ok and t == "Instance"
+end
+
 local function resolveUIParent()
     if type(gethui) == "function" then
         local ok, hui = pcall(gethui)
-        if ok and hui then
-            local usable = pcall(function() local _ = hui.Name end)
-            if usable then
-                print("[FPS Booster] UI parent: gethui() (Delta-safe) ✓")
-                return hui, "gethui"
-            end
+        if ok and isValidInstance(hui) then
+            print("[FPS Booster] UI parent: gethui() OK")
+            return hui, "gethui"
         end
     end
-
     do
-        local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
-        if ok and coreGui then
-            local nameOk = pcall(function() return coreGui.Name end)
-            if nameOk then
-                print("[FPS Booster] UI parent: CoreGui ✓")
-                return coreGui, "CoreGui"
-            end
+        local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+        if ok and isValidInstance(cg) then
+            print("[FPS Booster] UI parent: CoreGui OK")
+            return cg, "CoreGui"
         end
     end
-
     do
-        local ok, playerGui = pcall(function()
-            return LocalPlayer:WaitForChild("PlayerGui", 10)
+        local ok, pg = pcall(function()
+            return LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                or LocalPlayer:WaitForChild("PlayerGui", 10)
         end)
-        if ok and playerGui then
-            print("[FPS Booster] UI parent: PlayerGui ✓")
-            return playerGui, "PlayerGui"
+        if ok and isValidInstance(pg) then
+            print("[FPS Booster] UI parent: PlayerGui OK")
+            return pg, "PlayerGui"
         end
     end
-
-    print("[FPS Booster] UI parent: workspace (fallback) ⚠")
+    print("[FPS Booster] UI parent: workspace (fallback)")
     return workspace, "workspace"
 end
 
 local uiParent, uiParentName = resolveUIParent()
-
 if not uiParent then
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "FPS Booster",
-            Text  = "Could not create UI. Check executor console.",
-            Duration = 8,
-        })
-    end)
-    warn("[FPS Booster] ❌ No UI parent available. Aborting.")
+    warn("[FPS Booster] FAIL: no UI parent available.")
     return
 end
 
--- ============================================================
--- 3. CONFIG & STATE
--- ============================================================
+-- 3. CONFIG & STATE --------------------------------------------
 local DEFAULTS = {
-    -- optimization
     disablePostFX    = true,
     disableParticles = true,
     flattenMaterials = true,
@@ -125,7 +107,7 @@ local DEFAULTS = {
     fpsCap           = 120,
     startDelay       = 3,
     batchSize        = 250,
-    -- esp
+
     espEnabled       = false,
     espBox           = true,
     espName          = true,
@@ -135,7 +117,7 @@ local DEFAULTS = {
     espTeamCheck     = true,
     espHighlight     = true,
     espMaxDistance   = 500,
-    -- aimbot
+
     aimEnabled       = false,
     aimUseLeft       = false,
     aimUseRight      = true,
@@ -150,9 +132,7 @@ local DEFAULTS = {
 local state = {}
 for k, v in pairs(DEFAULTS) do state[k] = v end
 
--- ============================================================
--- 4. PALETTE
--- ============================================================
+-- 4. PALETTE ---------------------------------------------------
 local C = {
     accent    = Color3.fromRGB(123, 92, 255),
     accent2   = Color3.fromRGB(78, 168, 255),
@@ -166,20 +146,15 @@ local C = {
     track     = Color3.fromRGB(40, 44, 56),
     chipBg    = Color3.fromRGB(28, 31, 41),
     line      = Color3.fromRGB(255, 255, 255),
-    -- esp
     espEnemy   = Color3.fromRGB(255, 92, 92),
     espAlly    = Color3.fromRGB(61, 220, 132),
     espNeutral = Color3.fromRGB(255, 196, 77),
 }
 
--- ============================================================
--- 5. UTILITIES
--- ============================================================
+-- 5. UTILITIES -------------------------------------------------
 local function safe(fn, ...)
     local ok, err = pcall(fn, ...)
-    if not ok then
-        warn("[FPS Booster] " .. tostring(err))
-    end
+    if not ok then warn("[FPS Booster] " .. tostring(err)) end
     return ok, err
 end
 
@@ -193,9 +168,7 @@ local function new(class, props, children)
         pcall(function() inst[k] = v end)
     end
     for _, child in ipairs(children or {}) do
-        if child then
-            pcall(function() child.Parent = inst end)
-        end
+        if child then pcall(function() child.Parent = inst end) end
     end
     return inst
 end
@@ -225,9 +198,7 @@ end
 local RAY_EXCLUDE = Enum.RaycastFilterType.Exclude
     or Enum.RaycastFilterType.Blacklist
 
--- ============================================================
--- 6. GUI ROOT — build everything, parent LAST
--- ============================================================
+-- 6. GUI ROOT --------------------------------------------------
 local gui = new("ScreenGui", {
     Name = "FPSBooster_" .. tostring(math.random(1000, 9999)),
     ResetOnSpawn = false,
@@ -238,15 +209,13 @@ local gui = new("ScreenGui", {
 })
 
 if not gui then
-    warn("[FPS Booster] ❌ Failed to create ScreenGui. Aborting.")
+    warn("[FPS Booster] FAIL: could not create ScreenGui.")
     return
 end
 
 _G.__FPS_BOOSTER_INSTANCE = gui
 
--- ============================================================
--- 7. TOASTS
--- ============================================================
+-- 7. TOASTS ----------------------------------------------------
 local toastHolder = new("Frame", {
     Name = "ToastHolder",
     BackgroundTransparency = 1,
@@ -333,9 +302,7 @@ local function toast(title, text)
     end)
 end
 
--- ============================================================
--- 8. OPTIMIZATION ROUTINES
--- ============================================================
+-- 8. OPTIMIZATION ROUTINES -------------------------------------
 local optimizer = {}
 
 function optimizer.applyLighting()
@@ -431,15 +398,14 @@ function optimizer.optimizeWorkspace(onProgress)
     end)
 end
 
--- ============================================================
--- 9. WINDOW
--- ============================================================
+-- 9. WINDOW ----------------------------------------------------
 local WIN_W, WIN_H = 400, 480
 
 local window = new("Frame", {
     Name = "Window",
     BackgroundColor3 = C.panelBg,
-    Position = UDim2.new(0, 70, 0, 96),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
     Size = UDim2.new(0, WIN_W, 0, WIN_H),
     BorderSizePixel = 0,
     ZIndex = 10,
@@ -463,7 +429,6 @@ new("UIGradient", {
     }),
 }, { topLine })
 
--- ---------- Title bar ----------
 local titlebar = new("Frame", {
     Name = "Titlebar",
     BackgroundColor3 = C.panelTop,
@@ -524,7 +489,7 @@ new("TextLabel", {
     Position = UDim2.new(0, 60, 0, 28),
     Size = UDim2.new(1, -140, 0, 14),
     Font = Enum.Font.Gotham,
-    Text = "client-side · v1.4",
+    Text = "client-side - v1.4",
     TextColor3 = C.muted,
     TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -567,7 +532,7 @@ end
 local btnMin   = makeWinBtn("-", -66, false)
 local btnClose = makeWinBtn("X", -36, true)
 
--- ---------- Tabs ----------
+-- Tabs
 local tabBar = new("Frame", {
     BackgroundTransparency = 1,
     Position = UDim2.new(0, 14, 0, 60),
@@ -616,7 +581,7 @@ for i, name in ipairs(tabNames) do
     tabs[tabKeys[i]] = { button = tab, indicator = indicator }
 end
 
--- ---------- Content ----------
+-- Content
 local content = new("Frame", {
     BackgroundTransparency = 1,
     Position = UDim2.new(0, 0, 0, 100),
@@ -647,7 +612,6 @@ for _, key in ipairs(tabKeys) do
     panels[key] = panel
 end
 
--- ---------- Row builders ----------
 local function makeDivider(parent)
     return new("Frame", {
         BackgroundColor3 = Color3.fromRGB(255, 255, 255),
@@ -844,7 +808,6 @@ local function buildSlider(row, key, min, max, step, suffix, formatFn, onChange)
     end
 end
 
--- ---------- Main tab ----------
 local function rebuildMainTab()
     for _, child in ipairs(panels.main:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
@@ -864,7 +827,6 @@ local function rebuildMainTab()
 end
 rebuildMainTab()
 
--- ---------- Performance tab ----------
 do
     local row1, t1, s1 = makeRow(panels.perf, 1)
     t1.Text = "FPS Cap"; s1.Text = "setfpscap(value)"
@@ -887,8 +849,7 @@ do
     buildToggle(row5, "globalShadowsOff", state.globalShadowsOff, nil)
 end
 
--- ---------- ESP tab ----------
-local refreshESP  -- forward declaration (assigned in §13.5)
+local refreshESP
 local rebuildESPTab
 
 rebuildESPTab = function()
@@ -927,8 +888,7 @@ rebuildESPTab = function()
 end
 rebuildESPTab()
 
--- ---------- Aimbot tab ----------
-local refreshAimbot  -- forward declaration (assigned in §13.6)
+local refreshAimbot
 local rebuildAimbotTab
 
 rebuildAimbotTab = function()
@@ -958,7 +918,7 @@ rebuildAimbotTab = function()
 
     order += 1
     local rowS, tS, sS = makeRow(panels.aim, order)
-    tS.Text = "Smoothness"; sS.Text = "1 = instant · higher = smoother"
+    tS.Text = "Smoothness"; sS.Text = "1 = instant, higher = smoother"
     buildSlider(rowS, "aimSmoothness", 1, 20, 1, "", nil, nil)
 
     order += 1
@@ -973,7 +933,7 @@ rebuildAimbotTab = function()
 end
 rebuildAimbotTab()
 
--- ---------- Output tab ----------
+-- Log tab
 local consoleFrame = new("Frame", {
     BackgroundTransparency = 1,
     Size = UDim2.new(1, 0, 1, 0),
@@ -1041,7 +1001,7 @@ local function logLine(message, kind)
     end)
 end
 
--- ---------- Footer ----------
+-- Footer
 local footer = new("Frame", {
     BackgroundColor3 = Color3.fromRGB(10, 11, 16),
     BackgroundTransparency = 0.78,
@@ -1093,11 +1053,12 @@ end
 local btnReset = makeButton("Reset", false)
 local btnApply = makeButton("Apply Optimizations", true)
 
--- ---------- Reopen chip ----------
+-- Reopen chip
 local chip = new("TextButton", {
     Name = "ReopenChip",
     BackgroundColor3 = C.chipBg,
-    Position = UDim2.new(1, -180, 1, -70),
+    AnchorPoint = Vector2.new(1, 1),
+    Position = UDim2.new(1, -20, 1, -20),
     Size = UDim2.new(0, 160, 0, 44),
     BorderSizePixel = 0,
     Font = Enum.Font.GothamBold,
@@ -1111,9 +1072,7 @@ local chip = new("TextButton", {
 corner(22, chip)
 stroke(C.line, 0.88, 1, chip)
 
--- ============================================================
--- 10. TAB SWITCHING
--- ============================================================
+-- 10. TAB SWITCHING --------------------------------------------
 local function selectTab(key)
     for _, k in ipairs(tabKeys) do
         local t = tabs[k]
@@ -1130,9 +1089,7 @@ for _, key in ipairs(tabKeys) do
     end)
 end
 
--- ============================================================
--- 11. DRAGGING
--- ============================================================
+-- 11. DRAGGING -------------------------------------------------
 local draggingWindow = false
 local dragStart, startPos
 
@@ -1164,9 +1121,7 @@ titlebar.InputEnded:Connect(function(input)
     end
 end)
 
--- ============================================================
--- 12. MINIMIZE / CLOSE / REOPEN
--- ============================================================
+-- 12. MINIMIZE / CLOSE / REOPEN --------------------------------
 btnMin.MouseButton1Click:Connect(function()
     local collapsed = window:GetAttribute("Collapsed") or false
     collapsed = not collapsed
@@ -1197,9 +1152,7 @@ chip.MouseButton1Click:Connect(function()
     chip.Visible = false
 end)
 
--- ============================================================
--- 13.5 ESP ENGINE
--- ============================================================
+-- 13.5 ESP ENGINE ----------------------------------------------
 local espCache = {}
 local espConn  = nil
 local DRAWING_OK = (type(Drawing) == "table" and type(Drawing.new) == "function")
@@ -1629,16 +1582,13 @@ Players.PlayerRemoving:Connect(function(plr)
     destroyESP(plr)
 end)
 
--- ============================================================
--- 13.6 AIMBOT ENGINE
--- ============================================================
+-- 13.6 AIMBOT ENGINE -------------------------------------------
 local aimBound   = false
 local AIM_BIND_NAME = "FPSBoosterAimbotUpdate"
 local aimHeldLeft  = false
 local aimHeldRight = false
 local aimHeldTouch = false
 
--- Track hold state on LMB / RMB / Touch
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -1663,7 +1613,6 @@ end)
 local function aimKeyActive()
     if state.aimUseLeft  and aimHeldLeft  then return true end
     if state.aimUseRight and aimHeldRight then return true end
-    -- Touch works with either toggle (mobile-friendly)
     if aimHeldTouch and (state.aimUseLeft or state.aimUseRight) then return true end
     return false
 end
@@ -1714,7 +1663,6 @@ local function pickAimTarget()
                                     local dist2D = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
                                     if dist2D <= fovPx then
                                         if not state.aimVisibleCheck or isTargetVisible(part) then
-                                            -- Score: 2D distance (closest to cursor wins)
                                             local score = dist2D
                                             if score < bestScore then
                                                 bestScore = score
@@ -1741,7 +1689,6 @@ local function applyAimToTarget(target)
     local camPos = camera.CFrame.Position
     local goalPos = target.part.Position
 
-    -- Guard against degenerate cases
     local dir = goalPos - camPos
     if dir.Magnitude < 0.05 then return end
 
@@ -1769,7 +1716,6 @@ end
 local function startAimbot()
     if aimBound then return end
     aimBound = true
-    -- Bind after the camera script so our CFrame write wins for the frame
     pcall(function()
         RunService:BindToRenderStep(AIM_BIND_NAME,
             Enum.RenderPriority.Camera.Value + 1,
@@ -1791,9 +1737,7 @@ refreshAimbot = function()
     end
 end
 
--- ============================================================
--- 13. APPLY / RESET
--- ============================================================
+-- 13. APPLY / RESET --------------------------------------------
 local applied = false
 
 local function refreshLightingLoop()
@@ -1859,7 +1803,6 @@ btnApply.MouseButton1Click:Connect(function()
         toast("FPS Booster", "Optimizations applied. FPS should be improved.")
     end)
 
-    -- ESP integration
     if state.espEnabled then
         logLine("ESP enabled (maxDistance=" .. tostring(state.espMaxDistance) .. "m)", "ok")
         if DRAWING_OK then
@@ -1872,7 +1815,6 @@ btnApply.MouseButton1Click:Connect(function()
     end
     refreshESP()
 
-    -- Aimbot integration
     if state.aimEnabled then
         local keys = {}
         if state.aimUseLeft  then table.insert(keys, "LMB") end
@@ -1895,12 +1837,10 @@ end)
 btnReset.MouseButton1Click:Connect(function()
     for k, v in pairs(DEFAULTS) do state[k] = v end
 
-    -- Stop ESP + aimbot before resetting UI
     stopESP()
     destroyAllESP()
     stopAimbot()
 
-    -- Rebuild tabs in place
     rebuildMainTab()
     rebuildESPTab()
     rebuildAimbotTab()
@@ -1910,32 +1850,35 @@ btnReset.MouseButton1Click:Connect(function()
     toast("FPS Booster", "Settings restored to defaults.")
 end)
 
--- ============================================================
--- 14. PARENT THE GUI (LAST — critical for Delta)
--- ============================================================
+-- 14. PARENT THE GUI (LAST) ------------------------------------
+print("[FPS Booster] Parenting GUI to " .. tostring(uiParentName) .. "...")
+
 local parentOk, parentErr = pcall(function()
     gui.Parent = uiParent
 end)
 
 if not parentOk then
-    warn("[FPS Booster] Failed to parent to " .. tostring(uiParentName) .. ": " .. tostring(parentErr))
+    warn("[FPS Booster] Parent to " .. tostring(uiParentName) .. " failed: " .. tostring(parentErr))
 
     local fallbacks = {
-        { name = "gethui",   getter = function()
+        { name = "gethui", getter = function()
             if type(gethui) == "function" then
                 local ok, h = pcall(gethui)
-                if ok then return h end
+                if ok and isValidInstance(h) then return h end
             end
             return nil
         end },
-        { name = "CoreGui",  getter = function()
+        { name = "CoreGui", getter = function()
             local ok, c = pcall(function() return game:GetService("CoreGui") end)
-            if ok then return c end
+            if ok and isValidInstance(c) then return c end
             return nil
         end },
         { name = "PlayerGui", getter = function()
-            local ok, p = pcall(function() return LocalPlayer:WaitForChild("PlayerGui", 5) end)
-            if ok then return p end
+            local ok, p = pcall(function()
+                return LocalPlayer:FindFirstChildOfClass("PlayerGui")
+                    or LocalPlayer:WaitForChild("PlayerGui", 5)
+            end)
+            if ok and isValidInstance(p) then return p end
             return nil
         end },
         { name = "workspace", getter = function() return workspace end },
@@ -1956,9 +1899,9 @@ if not parentOk then
 end
 
 if not parentOk then
-    warn("[FPS Booster] ❌ Could not parent the GUI anywhere. UI will not appear.")
+    warn("[FPS Booster] FAIL: could not parent GUI anywhere.")
     pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
+        StarterGui:SetCore("SendNotification", {
             Title = "FPS Booster",
             Text  = "UI failed to load. Try re-running the script.",
             Duration = 8,
@@ -1967,7 +1910,6 @@ if not parentOk then
     return
 end
 
--- Cleanup hook
 gui.AncestryChanged:Connect(function(_, parent)
     if not parent then
         stopESP()
@@ -1976,9 +1918,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
--- ============================================================
--- 15. BOOT
--- ============================================================
+-- 15. BOOT -----------------------------------------------------
 selectTab("main")
 
 logLine("FPS Booster v1.4 loaded.", "ok")
@@ -1990,7 +1930,22 @@ task.delay(0.7, function()
     toast("FPS Booster", "Menu loaded. Adjust settings, then press Apply.")
 end)
 
-print("[FPS Booster] ✅ UI loaded successfully.")
+print("[FPS Booster] UI loaded successfully.")
 print("[FPS Booster] GUI parent: " .. tostring(uiParentName))
 print("[FPS Booster] GUI name: " .. gui.Name)
 print("[FPS Booster] ESP backend: " .. (DRAWING_OK and "Drawing API" or "ScreenGui fallback"))
+
+end -- MAIN
+
+-- Run with error capture so nothing is silent
+local ok, err = pcall(MAIN)
+if not ok then
+    warn("[FPS Booster] FATAL ERROR: " .. tostring(err))
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "FPS Booster",
+            Text  = "Script error: " .. tostring(err),
+            Duration = 10,
+        })
+    end)
+end
