@@ -1,6 +1,6 @@
 -- ============================================================
 --  FPS BOOSTER -- Client-Side Menu (Roblox Lua)  [v1.4 FIXED]
---  ASCII-only, error-guarded, Delta-safe.
+--  ASCII-only, error-guarded, Delta-safe. 
 --  Requires an executor (tested target: Delta on mobile).
 -- ============================================================
 
