@@ -15,3 +15,9 @@ Player for your own RPG Maker MV/MZ, Flash (Ruffle) and HTML5 projects on iOS.
 ## Status
 - MV/MZ, HTML5, Flash (Ruffle), saves import/export, cheats, remappable on-screen pad, controller support
 - XP/VX/Ace (native RGSS): not included. Games are detected, but opening one shows a notice.
+
+## Credits
+The 🎮 cheat button opens the **RPG Maker MV/MZ Cheat UI** plugin by paramonos (MIT license),
+bundled unmodified from release v2.2.0: https://github.com/paramonos/RPG-Maker-MV-MZ-Cheat-UI-Plugin
+Its license and third-party notices are in `VRPGMaker/Resources/cheat/`.
+It is loaded into the page on first tap, so games are never modified on disk.

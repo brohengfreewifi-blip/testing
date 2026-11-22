@@ -15,7 +15,8 @@ struct GameMenu: View {
                 Section {
                     if session.game.engine == .mvmz {
                         NavigationLink("Saves") { SavesView(session: session) }
-                        NavigationLink("Cheats") { CheatsView(session: session) }
+                        Button("🎮 Cheat UI window") { dismiss(); session.toggleCheat() }
+                        NavigationLink("Quick cheats") { CheatsView(session: session) }
                     }
                     NavigationLink("Controls") { ControlsView(session: session) }
                     Toggle("On-screen gamepad", isOn: $session.padVisible)
@@ -36,6 +37,17 @@ struct ControlsView: View {
     @ObservedObject var session: GameSession
     var body: some View {
         List {
+            Section("On-screen pad") {
+                Toggle("Joystick instead of D-pad", isOn: $session.layout.joystick)
+                HStack {
+                    Text("Opacity")
+                    Slider(value: $session.layout.opacity, in: 0.2...1)
+                }
+                Button("Edit layout (move, resize, add buttons)") {
+                    session.padVisible = true
+                    session.editingLayout = true
+                }
+            }
             Section("Each control sends this key to the game") {
                 ForEach(PadAction.allCases) { a in
                     Picker(a.title, selection: Binding(

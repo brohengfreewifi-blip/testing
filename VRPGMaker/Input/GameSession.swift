@@ -11,12 +11,16 @@ final class GameSession: ObservableObject {
     @Published var padVisible = true
     @Published var controllerConnected = false
     @Published var bindings: [PadAction: String] = [:]
+    @Published var layout: PadLayout { didSet { layout.save(for: game.id) } }
+    @Published var editingLayout = false
+    private var heldKeys = Set<String>()
 
     private var held = Set<PadAction>()
     private var observers: [NSObjectProtocol] = []
 
     init(game: Game) {
         self.game = game
+        self.layout = PadLayout.load(for: game.id)
         var map: [PadAction: String] = [:]
         let saved = UserDefaults.standard.dictionary(forKey: bindKey) as? [String: String] ?? [:]
         for a in PadAction.allCases { map[a] = saved[a.rawValue] ?? a.defaultKey }
@@ -46,7 +50,50 @@ final class GameSession: ObservableObject {
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    func releaseAll() { for a in held { set(a, false) } }
+    /// Press / release a raw key by name (used by custom buttons).
+    func sendKey(_ name: String, _ down: Bool) {
+        if down == heldKeys.contains(name) { return }
+        if down { heldKeys.insert(name) } else { heldKeys.remove(name) }
+        let k = KeyChoice.named(name)
+        let js = "window.__vk&&window.__vk('\(down ? "keydown" : "keyup")','\(k.key)','\(k.code)',\(k.keyCode));"
+        webView?.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    /// Opens / closes the Cheat UI plugin window (paramonos). Loads it on first use.
+    /// The plugin's open/close shortcut is the "c" key by default, so we send that to the page.
+    func toggleCheat() {
+        guard game.engine == .mvmz else { return }
+        let js = #"""
+        (function(){
+          function toggle(){
+            ['keydown','keyup'].forEach(function(t){
+              var e = new KeyboardEvent(t, {key:'c', code:'KeyC', bubbles:true, cancelable:true});
+              try {
+                Object.defineProperty(e,'keyCode',{get:function(){return 67;}});
+                Object.defineProperty(e,'which',{get:function(){return 67;}});
+              } catch(x) {}
+              window.dispatchEvent(e);
+            });
+          }
+          if (window.__vrpgCheatLoaded) { toggle(); return; }
+          window.__vrpgCheatLoaded = true;
+          var l = document.createElement('link');
+          l.rel = 'stylesheet'; l.href = 'vrpg://cheat/cheat.css';
+          document.head.appendChild(l);
+          var s = document.createElement('script');
+          s.src = 'vrpg://cheat/cheat.js';
+          s.onload = function(){ setTimeout(toggle, 600); };
+          s.onerror = function(){ window.__vrpgCheatLoaded = false; };
+          document.body.appendChild(s);
+        })();
+        """#
+        webView?.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func releaseAll() {
+        for a in held { set(a, false) }
+        for k in heldKeys { sendKey(k, false) }
+    }
 
     // MARK: Controllers
 

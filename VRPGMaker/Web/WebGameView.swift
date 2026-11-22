@@ -1,6 +1,22 @@
 import SwiftUI
 import WebKit
 
+/// Web view that tells the game to re-measure itself whenever its size changes (rotation, split view).
+final class GameWebView: WKWebView {
+    private var lastSize: CGSize = .zero
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.size != lastSize else { return }
+        lastSize = bounds.size
+        for delay in [0.0, 0.25, 0.7] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.evaluateJavaScript("window.dispatchEvent(new Event('resize'));", completionHandler: nil)
+            }
+        }
+    }
+}
+
 struct WebGameView: UIViewRepresentable {
     let session: GameSession
 
@@ -14,8 +30,12 @@ struct WebGameView: UIViewRepresentable {
       document.dispatchEvent(e);
     };
     document.addEventListener('DOMContentLoaded', function() {
+      var m = document.querySelector('meta[name=viewport]');
+      if (!m) { m = document.createElement('meta'); m.name = 'viewport'; document.head.appendChild(m); }
+      m.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
       var s = document.createElement('style');
-      s.textContent = '*{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}';
+      s.textContent = 'html,body{margin:0;padding:0;overflow:hidden;background:#000}' +
+        '*{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}';
       document.head.appendChild(s);
     });
     """#
@@ -30,16 +50,20 @@ struct WebGameView: UIViewRepresentable {
         let handler = VRPGSchemeHandler(
             gameRoot: GameLibrary.folderURL(for: game),
             ruffleRoot: Bundle.main.url(forResource: "ruffle", withExtension: nil),
+            cheatRoot: Bundle.main.url(forResource: "cheat", withExtension: nil),
             swfEntry: game.engine == .flash ? game.entry : nil)
         session.schemeHandler = handler
         cfg.setURLSchemeHandler(handler, forURLScheme: "vrpg")
         cfg.userContentController.addUserScript(
             WKUserScript(source: Self.bootJS, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
-        let wv = WKWebView(frame: .zero, configuration: cfg)
+        let wv = GameWebView(frame: .zero, configuration: cfg)
         wv.scrollView.isScrollEnabled = false
         wv.scrollView.bounces = false
         wv.scrollView.contentInsetAdjustmentBehavior = .never
+        wv.scrollView.minimumZoomScale = 1
+        wv.scrollView.maximumZoomScale = 1
+        wv.scrollView.pinchGestureRecognizer?.isEnabled = false
         wv.isOpaque = false
         wv.backgroundColor = .black
         wv.scrollView.backgroundColor = .black

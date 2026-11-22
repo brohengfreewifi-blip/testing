@@ -2,19 +2,22 @@ import WebKit
 
 /// Serves  vrpg://game/...   from the game's folder
 ///         vrpg://ruffle/... from the bundled Ruffle build
+///         vrpg://cheat/...  from the bundled Cheat UI plugin (paramonos, MIT)
 /// Avoids file:// CORS / XHR problems and gives every game a stable origin.
 final class VRPGSchemeHandler: NSObject, WKURLSchemeHandler {
     let gameRoot: URL
     let ruffleRoot: URL?
+    let cheatRoot: URL?
     let swfEntry: String?
 
     private let queue = DispatchQueue(label: "vrpg.scheme", attributes: .concurrent)
     private let lock = NSLock()
     private var stopped = Set<ObjectIdentifier>()
 
-    init(gameRoot: URL, ruffleRoot: URL?, swfEntry: String?) {
+    init(gameRoot: URL, ruffleRoot: URL?, cheatRoot: URL?, swfEntry: String?) {
         self.gameRoot = gameRoot
         self.ruffleRoot = ruffleRoot
+        self.cheatRoot = cheatRoot
         self.swfEntry = swfEntry
     }
 
@@ -45,7 +48,13 @@ final class VRPGSchemeHandler: NSObject, WKURLSchemeHandler {
             data = Data(Self.swfPage(entry: swf).utf8)
             mime = "text/html"
         } else {
-            let root: URL? = host == "ruffle" ? ruffleRoot : (host == "game" ? gameRoot : nil)
+            let root: URL?
+            switch host {
+            case "game": root = gameRoot
+            case "ruffle": root = ruffleRoot
+            case "cheat": root = cheatRoot
+            default: root = nil
+            }
             if let root = root {
                 let file = root.appendingPathComponent(String(path.dropFirst())).standardizedFileURL
                 if file.path.hasPrefix(root.standardizedFileURL.path) {

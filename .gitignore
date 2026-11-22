@@ -3,3 +3,4 @@ build/
 Config/Info.plist
 VRPGMaker/Resources/ruffle/*
 !VRPGMaker/Resources/ruffle/.gitkeep
+*.ipa
