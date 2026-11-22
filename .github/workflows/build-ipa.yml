@@ -1,0 +1,39 @@
+name: Build IPA
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Bundle Ruffle (Flash player)
+        run: |
+          mkdir -p /tmp/rf && cd /tmp/rf && npm init -y >/dev/null && npm install @ruffle-rs/ruffle
+          rm -rf "$GITHUB_WORKSPACE/VRPGMaker/Resources/ruffle"
+          mkdir -p "$GITHUB_WORKSPACE/VRPGMaker/Resources/ruffle"
+          cp -R node_modules/@ruffle-rs/ruffle/. "$GITHUB_WORKSPACE/VRPGMaker/Resources/ruffle/"
+          ls "$GITHUB_WORKSPACE/VRPGMaker/Resources/ruffle" | head -20
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project VRPGMaker.xcodeproj -scheme VRPGMaker \
+            -configuration Release -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package IPA
+        run: |
+          APP=$(find build -name "*.app" -path "*Release-iphoneos*" | head -1)
+          echo "App: $APP"
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          zip -qry V-RPGMaker.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V-RPGMaker-ipa
+          path: V-RPGMaker.ipa
