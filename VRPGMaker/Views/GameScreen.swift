@@ -20,17 +20,35 @@ struct GameScreen: View {
             VStack {
                 HStack {
                     Spacer()
-                    Button { showMenu = true } label: {
-                        Image(systemName: "line.3.horizontal.circle.fill")
-                            .font(.system(size: 34))
-                            .foregroundStyle(.white.opacity(0.65))
-                            .shadow(radius: 3)
+                    VStack(spacing: 10) {
+                        Button { showMenu = true } label: {
+                            Image(systemName: "line.3.horizontal.circle.fill")
+                                .font(.system(size: 34))
+                                .foregroundStyle(.white.opacity(0.65))
+                                .shadow(radius: 3)
+                        }
+                        // Hide / show the on-screen controls. Not needed while a controller is
+                        // connected (the pad is already hidden) or while editing the layout.
+                        if !session.controllerConnected && !session.editingLayout {
+                            Button { session.padVisible.toggle() } label: {
+                                Image(systemName: session.padVisible ? "eye.slash.circle.fill" : "eye.circle.fill")
+                                    .font(.system(size: 34))
+                                    .foregroundStyle(.white.opacity(0.65))
+                                    .shadow(radius: 3)
+                            }
+                            .accessibilityLabel(session.padVisible ? "Hide controls" : "Show controls")
+                        }
                     }
                 }
                 Spacer()
             }
             .padding(12)
         }
+        .alert("Cheat UI", isPresented: Binding(
+            get: { session.cheatError != nil },
+            set: { if !$0 { session.cheatError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(session.cheatError ?? "") }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .sheet(isPresented: $showMenu) {

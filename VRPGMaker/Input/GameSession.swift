@@ -13,6 +13,7 @@ final class GameSession: ObservableObject {
     @Published var bindings: [PadAction: String] = [:]
     @Published var layout: PadLayout { didSet { layout.save(for: game.id) } }
     @Published var editingLayout = false
+    @Published var cheatError: String?
     private var heldKeys = Set<String>()
 
     private var held = Set<PadAction>()
@@ -60,35 +61,82 @@ final class GameSession: ObservableObject {
     }
 
     /// Opens / closes the Cheat UI plugin window (paramonos). Loads it on first use.
-    /// The plugin's open/close shortcut is the "c" key by default, so we send that to the page.
+    /// The plugin has no direct API, so we load it through its own `__mvMzCheatGuard` hook
+    /// (which reports load and startup failures), wait until it has started, work out which key
+    /// it currently listens for (the user can rebind it), and send that key to the page.
+    /// Anything that goes wrong is shown to the user instead of failing silently.
     func toggleCheat() {
         guard game.engine == .mvmz else { return }
-        let js = #"""
-        (function(){
-          function toggle(){
-            ['keydown','keyup'].forEach(function(t){
-              var e = new KeyboardEvent(t, {key:'c', code:'KeyC', bubbles:true, cancelable:true});
-              try {
-                Object.defineProperty(e,'keyCode',{get:function(){return 67;}});
-                Object.defineProperty(e,'which',{get:function(){return 67;}});
-              } catch(x) {}
-              window.dispatchEvent(e);
-            });
-          }
-          if (window.__vrpgCheatLoaded) { toggle(); return; }
-          window.__vrpgCheatLoaded = true;
-          var l = document.createElement('link');
-          l.rel = 'stylesheet'; l.href = 'vrpg://cheat/cheat.css';
-          document.head.appendChild(l);
+        Task { @MainActor in
+            let r = await run(Self.cheatJS) as? String
+            if let r, r != "ok" { cheatError = r.hasPrefix("ERROR: ") ? String(r.dropFirst(7)) : r }
+        }
+    }
+
+    private static let cheatJS = #"""
+    try {
+      function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+      var G = window.__vrpgCheat;
+      if (!G) {
+        G = window.__vrpgCheat = { fatal: [], evaluated: false, started: false, match: null, label: '', loaded: false };
+        function msg(e){ return (e && e.message) || String(e); }
+        window.__mvMzCheatGuard = {
+          evaluated: function(){ G.evaluated = true; },
+          evaluateFailed: function(e){ G.fatal.push('script error: ' + msg(e)); },
+          stageFailed: function(name, essential, e){ if (essential) G.fatal.push(name + ': ' + msg(e)); },
+          started: function(){ G.started = true; },
+          setOpenKey: function(label, fn){ G.label = label; G.match = fn; }
+        };
+        var l = document.createElement('link');
+        l.rel = 'stylesheet'; l.href = 'vrpg://cheat/cheat.css';
+        document.head.appendChild(l);
+        await new Promise(function(resolve, reject){
           var s = document.createElement('script');
           s.src = 'vrpg://cheat/cheat.js';
-          s.onload = function(){ setTimeout(toggle, 600); };
-          s.onerror = function(){ window.__vrpgCheatLoaded = false; };
+          s.onload = resolve;
+          s.onerror = function(){ reject(new Error('Could not load the cheat plugin files (vrpg://cheat/cheat.js).')); };
           document.body.appendChild(s);
-        })();
-        """#
-        webView?.evaluateJavaScript(js, completionHandler: nil)
-    }
+        });
+        G.loaded = true;
+      }
+      for (var i = 0; i < 50 && !G.started && G.fatal.length === 0; i++) await sleep(100);
+      if (G.fatal.length) throw new Error('The cheat plugin failed to start: ' + G.fatal.join('; '));
+      if (!G.evaluated || !G.started || !document.getElementById('cheat-root'))
+        throw new Error('The cheat plugin loaded but did not start. Wait for the game to finish loading, then try again.');
+
+      var k = 67, mods = {ctrl: false, alt: false, shift: false, meta: false};
+      if (G.match) {
+        var found = false;
+        for (var m = 0; m < 16 && !found; m++) {
+          var c = !!(m & 1), a = !!(m & 2), sh = !!(m & 4), me = !!(m & 8);
+          for (var kc = 8; kc <= 255; kc++) {
+            if ([16, 17, 18, 91, 93, 224].indexOf(kc) >= 0) continue;
+            var ok = false;
+            try { ok = G.match({keyCode: kc, ctrlKey: c, altKey: a, shiftKey: sh, metaKey: me}); } catch (x) {}
+            if (ok) { k = kc; mods = {ctrl: c, alt: a, shift: sh, meta: me}; found = true; break; }
+          }
+        }
+        if (!found) throw new Error('Could not work out the cheat open key (' + G.label + ').');
+      }
+      function fire(type){
+        var e = new KeyboardEvent(type, {
+          key: (k >= 65 && k <= 90) ? String.fromCharCode(k + 32) : '', code: '',
+          ctrlKey: mods.ctrl, altKey: mods.alt, shiftKey: mods.shift, metaKey: mods.meta,
+          bubbles: true, cancelable: true
+        });
+        try {
+          Object.defineProperty(e, 'keyCode', {get: function(){ return k; }});
+          Object.defineProperty(e, 'which', {get: function(){ return k; }});
+        } catch (x) {}
+        window.dispatchEvent(e);
+      }
+      await sleep(80);
+      fire('keydown');
+      await sleep(40);
+      fire('keyup');
+      return 'ok';
+    } catch (e) { return 'ERROR: ' + ((e && e.message) || e); }
+    """#
 
     func releaseAll() {
         for a in held { set(a, false) }

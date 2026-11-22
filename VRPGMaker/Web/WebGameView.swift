@@ -35,7 +35,8 @@ struct WebGameView: UIViewRepresentable {
       m.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
       var s = document.createElement('style');
       s.textContent = 'html,body{margin:0;padding:0;overflow:hidden;background:#000}' +
-        '*{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}';
+        '*{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}' +
+        'input,textarea,[contenteditable],.cheat-root,.cheat-root *{-webkit-user-select:text;user-select:text}';
       document.head.appendChild(s);
     });
     """#
