@@ -73,7 +73,7 @@ struct LibraryView: View {
             .alert("Engine not available", isPresented: $unsupported) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("Native RPG Maker XP / VX / Ace support (RGSS) is not included in this build yet. MV, MZ, Flash and HTML5 games run normally.")
+                Text("Native RPG Maker XP / VX / Ace support (RGSS) is not included in this build yet. MV, MZ, Flash, HTML5, Godot, Unity WebGL, Construct, Ren'Py and Tyrano web games run normally.")
             }
             .fullScreenCover(item: $selected) { GameScreen(game: $0) }
         }

@@ -5,6 +5,10 @@ import CoreGraphics
 /// stored separately for portrait and landscape so rotating keeps both layouts.
 struct PadElement: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case move, action, key, cheat }
+    enum CodingKeys: String, CodingKey {
+        case id, kind, value, label, size, visible, portrait, landscape, opacity, latch
+    }
+
     var id: String
     var kind: Kind
     var value: String          // PadAction rawValue (action) or key name (key)
@@ -13,6 +17,12 @@ struct PadElement: Codable, Identifiable, Equatable {
     var visible: Bool
     var portrait: [Double]
     var landscape: [Double]
+    var opacity: Double = 1    // multiplies the layout-wide opacity
+    var latch: Bool = false    // tap to hold, tap again to release (key / action buttons)
+
+    /// Ids of the controls that come with the default layout. Everything else is user-made.
+    static let builtInIDs: Set<String> = ["move", "ok", "cancel", "shift", "menu", "cheat"]
+    var isCustom: Bool { !Self.builtInIDs.contains(id) }
 
     func pos(_ land: Bool) -> CGPoint {
         let p = land ? landscape : portrait
@@ -24,10 +34,34 @@ struct PadElement: Codable, Identifiable, Equatable {
     }
 }
 
+extension PadElement {
+    // Layouts saved by older versions have no opacity / latch keys; they must still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        value = try c.decode(String.self, forKey: .value)
+        label = try c.decode(String.self, forKey: .label)
+        size = try c.decode(Double.self, forKey: .size)
+        visible = try c.decode(Bool.self, forKey: .visible)
+        portrait = try c.decode([Double].self, forKey: .portrait)
+        landscape = try c.decode([Double].self, forKey: .landscape)
+        opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        latch = try c.decodeIfPresent(Bool.self, forKey: .latch) ?? false
+    }
+}
+
 struct PadLayout: Codable, Equatable {
+    enum CodingKeys: String, CodingKey { case elements, opacity, joystick, snap, haptics }
+
     var elements: [PadElement]
     var opacity: Double
     var joystick: Bool
+    var snap: Bool = false      // snap dragged controls to a grid
+    var haptics: Bool = true    // light vibration when a button is pressed
+
+    static let sizeRange: ClosedRange<Double> = 36...240
+    static let snapStep = 0.025
 
     /// The 🎮 button that opens the Cheat UI plugin (MV/MZ games only).
     static var cheatElement: PadElement {
@@ -51,6 +85,24 @@ struct PadLayout: Codable, Equatable {
         ], opacity: 0.65, joystick: false)
     }
 
+    // MARK: Quick adjustments
+
+    /// Swaps left and right (left-handed layout). The 🎮 button stays put so it never lands under the menu buttons.
+    mutating func mirrorHorizontally() {
+        for i in elements.indices where elements[i].kind != .cheat {
+            elements[i].portrait[0] = 1 - elements[i].portrait[0]
+            elements[i].landscape[0] = 1 - elements[i].landscape[0]
+        }
+    }
+
+    mutating func scaleSizes(by factor: Double) {
+        for i in elements.indices {
+            elements[i].size = min(max(elements[i].size * factor, Self.sizeRange.lowerBound), Self.sizeRange.upperBound)
+        }
+    }
+
+    // MARK: Persistence
+
     private static func key(_ id: UUID) -> String { "padlayout.\(id.uuidString)" }
 
     static func load(for id: UUID) -> PadLayout {
@@ -63,5 +115,16 @@ struct PadLayout: Codable, Equatable {
     }
     func save(for id: UUID) {
         if let d = try? JSONEncoder().encode(self) { UserDefaults.standard.set(d, forKey: Self.key(id)) }
+    }
+}
+
+extension PadLayout {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        elements = try c.decode([PadElement].self, forKey: .elements)
+        opacity = try c.decode(Double.self, forKey: .opacity)
+        joystick = try c.decode(Bool.self, forKey: .joystick)
+        snap = try c.decodeIfPresent(Bool.self, forKey: .snap) ?? false
+        haptics = try c.decodeIfPresent(Bool.self, forKey: .haptics) ?? true
     }
 }

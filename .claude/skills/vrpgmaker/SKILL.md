@@ -1,6 +1,6 @@
 ---
 name: vrpgmaker
-description: Project guide for V-RPGMaker, a SwiftUI iOS app that plays the user's own RPG Maker MV/MZ, Flash (Ruffle) and HTML5 games inside WKWebView, with on-screen gamepad, key remapping, save import/export and a bundled cheat UI. Use this skill whenever working in this repo - editing any Swift file under VRPGMaker/, changing project.yml, the GitHub Actions workflow, build_ipa.sh/.bat, the vrpg:// scheme handler, game detection or import, pad layout or key bindings, the save or cheat JavaScript bridge, or the bundled cheat/ruffle resources. Also use it for building or sideloading the unsigned IPA, adding a new engine or pad control, or debugging a game that will not load, resize, accept input or save. Consult it even for small changes, because the xcodegen setup, the JS bridge and the CI-only Ruffle bundling have non-obvious constraints.
+description: Project guide for V-RPGMaker, a SwiftUI iOS app that plays the user's own RPG Maker MV/MZ, Flash (Ruffle), HTML5, Godot, Unity WebGL, Construct, Ren'Py and Tyrano web games inside WKWebView, with on-screen gamepad, key remapping, save import/export and a bundled cheat UI. Use this skill whenever working in this repo - editing any Swift file under VRPGMaker/, changing project.yml, the GitHub Actions workflow, build_ipa.sh/.bat, the vrpg:// scheme handler, game detection or import, pad layout or key bindings, the save or cheat JavaScript bridge, or the bundled cheat/ruffle resources. Also use it for building or sideloading the unsigned IPA, adding a new engine or pad control, or debugging a game that will not load, resize, accept input or save. Consult it even for small changes, because the xcodegen setup, the JS bridge and the CI-only Ruffle bundling have non-obvious constraints.
 ---
 
 # V-RPGMaker
@@ -19,7 +19,7 @@ An iOS 17+ SwiftUI app (Swift 5 mode, bundle id `com.vrpgmaker.player`) that imp
 ```
 VRPGMaker/
   App/VRPGMakerApp.swift        entry point, injects GameLibrary, forces dark mode
-  Models/Game.swift             Engine enum (mvmz, rgss, flash, html5) + Game struct (Codable)
+  Models/Game.swift             Engine enum (mvmz, rgss, flash, html5, godot, unity, construct, renpy, tyrano) + Game struct (Codable)
   Models/GameLibrary.swift      import, engine detection, persistence, removal
   Web/VRPGSchemeHandler.swift   serves vrpg://game | ruffle | cheat, Range support, SWF host page
   Web/WebGameView.swift         WKWebView setup, boot JS (__vk, viewport, CSS), resize forwarding
@@ -55,11 +55,16 @@ Read `references/architecture.md` for how the pieces connect before changing any
 ### Add or change a pad action / default key
 Edit `PadAction` in `KeyBinding.swift` (add `title` and `defaultKey` cases), map it in `GameSession.apply(_:)` for controllers, and add a default element in `PadLayout.default` if it needs an on-screen button. Bindings load via `PadAction.allCases` with a default fallback, so old saved bindings stay valid. For a new **default on-screen element**, follow the `cheatElement` pattern: also append it in `PadLayout.load` when missing, otherwise existing users never see it.
 
+### Change the on-screen pad or its editor
+`PadLayout`/`PadElement` are persisted as JSON in `UserDefaults`, so **every new stored field needs a default and a `decodeIfPresent` in the custom `init(from:)`** (both live in `PadLayout.swift`, with explicit `CodingKeys`). A plain synthesized decoder would throw on old data and `PadLayout.load` would silently fall back to the default layout, wiping users' customisations. Current per-control fields: `size`, `opacity` (multiplies the layout opacity), `label`, `visible`, `latch` (sticky: tap to hold, tap to release), per-orientation positions. Layout-wide: `joystick`, `opacity`, `snap` (grid of `PadLayout.snapStep`), `haptics`. Built-in ids are in `PadElement.builtInIDs`; only other ids can be deleted from the editor.
+
+The editor is `PadOverlay` in `GameScreen.swift`: drag to move, pinch (`MagnifyGesture`) to resize, a two-tab panel (Control = selected control, Layout = whole pad, quick layouts, add button of type Key or Action), nudge arrows, duplicate, delete, panel can move top/bottom or collapse. Keep three things true when editing it: SwiftUI `ViewBuilder` takes at most 10 sibling views (wrap sections in `Group`), property bindings go through `binding(id, keyPath, fallback:)` so deleting an element cannot crash a stale index, and `PadOverlay.onDisappear` calls `session.releaseAll()` so hiding the pad never leaves a sticky key held.
+
 ### Add a supported key
 Append a `KeyChoice` in `KeyChoice.all` (`name`, DOM `key`, `code`, legacy `keyCode`). The `name` is what gets persisted, so do not rename existing ones.
 
 ### Add or change engine detection
-`GameLibrary.detect` order matters: `index.html` (root, then `www/`) wins, then `Game.ini` (RGSS), then a `.swf` within 3 levels. MZ is identified by `js/rmmz_core.js`, MV by `js/rpg_core.js`, otherwise plain HTML5. To add an engine: extend `Engine` (label + SF Symbol icon), `detect`, the start URL in `WebGameView.makeUIView`, the `open` gate in `LibraryView`, and any menu rows in `GameMenu`. `Engine` is `Codable` and persisted in `library.json`, so never rename or remove existing cases (it would silently drop users' libraries because `load()` swallows decode errors).
+`GameLibrary.detect` order matters: `index.html` (root, then `www/`) wins, then `Game.ini` (RGSS), then a `.swf` within 3 levels, then `index.html` one folder down. Inside `detectWeb`: MZ is `js/rmmz_core.js`, MV is `js/rpg_core.js`; otherwise the pure `webEngine` classifier checks, in order, Tyrano (`tyrano/`), Unity (`Build/*.loader.js|*.framework.js`, `createUnityInstance`), Godot (`*.pck`), Construct (`c2/c3runtime.js`), Ren'Py (`renpy.js`), else HTML5. All of them share the same `vrpg://game/<entry>` start URL; they differ only in label/icon and, for Godot, the isolation headers. To add another web engine, add an `Engine` case (append only) and a rule in `webEngine`. To add an engine: extend `Engine` (label + SF Symbol icon), `detect`, the start URL in `WebGameView.makeUIView`, the `open` gate in `LibraryView`, and any menu rows in `GameMenu`. `Engine` is `Codable` and persisted in `library.json`, so never rename or remove existing cases (it would silently drop users' libraries because `load()` swallows decode errors).
 
 ### Touch the Swift/JS bridge (saves, cheats)
 Use `GameSession.run(_ body:args:)`: it wraps `callAsyncJavaScript` in the **page** content world, so the body can `await` and `return`, and `args` become local variables (never string-interpolate user input into JS). Errors come back as the string `"ERROR: ..."`; callers check for that prefix. The RPG Maker globals involved ($gameParty, $dataItems, DataManager, StorageManager, Utils.RPGMAKER_NAME, ...) differ between MV and MZ; see `references/architecture.md` ("JS bridge").

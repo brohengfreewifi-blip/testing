@@ -20,10 +20,11 @@
 `GameLibrary.importFolder` / `importFile` take a security-scoped URL, run the copy on a detached task, then append and persist. Copies go to `Documents/Games/<uuid>`.
 
 `detect(in:fallbackTitle:)` order:
-1. For `""` then `"www/"`: if `index.html` exists, title from `<title>` (fallback: folder name). `js/rmmz_core.js` -> MV/MZ with `isMZ = true`; `js/rpg_core.js` -> MV/MZ with `isMZ = false`; else HTML5.
+1. For `""` then `"www/"` (`detectWeb`): if `index.html` exists, title from `<title>` (fallback: folder name). `js/rmmz_core.js` -> MV/MZ with `isMZ = true`; `js/rpg_core.js` -> MV/MZ with `isMZ = false`; otherwise `webEngine` picks Tyrano, Unity, Godot, Construct, Ren'Py or HTML5 from file names and the first 256 KB of index.html.
 2. `Game.ini` -> `.rgss`, title from the `Title=` line.
 3. First `.swf` found while enumerating (skips descendants deeper than 3 levels) -> `.flash`, entry is the relative path.
-4. Otherwise `nil`, and the import fails with a user-facing message.
+4. `detectWeb` again on each immediate subfolder (user picked a parent folder).
+5. Otherwise `nil`, and the import fails with a user-facing message.
 
 `Game` fields: `id`, `title`, `engine`, `folderName` (the uuid string), `entry` (relative path), `isMZ`, `dateAdded`. `isMZ` selects save file extension and the JS save APIs.
 
@@ -34,6 +35,8 @@
 - Host `game` -> game folder; `ruffle` -> `Bundle.main` `ruffle` folder reference; `cheat` -> `cheat` folder reference. Unknown host or missing file -> 404 `text/plain`.
 - Empty path -> `/index.html`.
 - `/__swf.html` on host `game` is generated in code (`swfPage`): sets `RufflePlayer.config` (`publicPath: vrpg://ruffle/`, autoplay on, letterbox on), loads `ruffle.js`, creates a player filling the page, and `load`s `vrpg://game/<swf>`. It shows a notice if Ruffle is not bundled.
+- On host `game`, `*.js|wasm|data|json|mem` with a `.br` or `.gz` suffix (Unity builds) are decoded in `brotli`/`gunzip` and served with the inner MIME and no `Content-Encoding`.
+- With `crossOriginIsolated` (Godot only) every response gets `Cross-Origin-Resource-Policy: cross-origin` and HTML also gets COOP `same-origin` + COEP `require-corp`, for threaded Godot 4 builds.
 - Always sends `Access-Control-Allow-Origin: *`, `Accept-Ranges: bytes`, `Cache-Control: no-cache`. Handles single `bytes=start-end` ranges with 206 (needed for audio/video seeking). Files are read with `.mappedIfSafe`.
 - `mime(for:)` is the extension table. Add new extensions there (wrong MIME types break audio, wasm and ES modules).
 
@@ -54,7 +57,7 @@ Sources: on-screen controls (`HoldButton`, `DPadView`, `JoystickView`), game con
 - `sendKey(name, down)` does the same for raw key names (custom buttons) with its own `heldKeys` set.
 - `apply(_ gp:)` maps `GCExtendedGamepad` to actions: d-pad or left stick (threshold 0.5), A=ok, B=cancel, X=shift, Y/Menu=menu, shoulders=page up/down. It recomputes the full wanted set each change, so releases are implicit.
 - `DPadView` and `JoystickView` both emit 4-way `PadAction`s from a drag (joystick adds a following knob; diagonals are two simultaneous directions).
-- `PadLayout` holds `elements`, `opacity`, `joystick`, persisted as JSON under `padlayout.<uuid>`. Element kinds: `move`, `action` (value = PadAction raw value), `key` (value = KeyChoice name), `cheat` (MV/MZ only). Edit mode (`session.editingLayout`) swaps controls for draggable dashed boxes plus a settings panel (size 36...240, label max 6 chars, visibility, add/delete key buttons, reset).
+- `PadLayout` holds `elements`, `opacity`, `joystick`, `snap`, `haptics`, persisted as JSON under `padlayout.<uuid>` (older saves without the newer keys still decode). Element kinds: `move`, `action` (value = PadAction raw value), `key` (value = KeyChoice name), `cheat` (MV/MZ only). Edit mode (`session.editingLayout`) swaps controls for draggable, pinch-resizable dashed boxes plus a two-tab panel: Control (size 36...240, opacity, label max 6 chars, key, sticky, visibility, nudge, duplicate, delete) and Layout (joystick, opacity, snap, vibration, mirror/smaller/larger, add Key or Action button, reset). Sticky buttons are handled inside `HoldButton`; haptics use `UIImpactFeedbackGenerator`.
 
 ## JS bridge (saves and cheats)
 

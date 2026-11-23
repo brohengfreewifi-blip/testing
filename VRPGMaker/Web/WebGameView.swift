@@ -52,7 +52,8 @@ struct WebGameView: UIViewRepresentable {
             gameRoot: GameLibrary.folderURL(for: game),
             ruffleRoot: Bundle.main.url(forResource: "ruffle", withExtension: nil),
             cheatRoot: Bundle.main.url(forResource: "cheat", withExtension: nil),
-            swfEntry: game.engine == .flash ? game.entry : nil)
+            swfEntry: game.engine == .flash ? game.entry : nil,
+            crossOriginIsolated: game.engine == .godot)
         session.schemeHandler = handler
         cfg.setURLSchemeHandler(handler, forURLScheme: "vrpg")
         cfg.userContentController.addUserScript(

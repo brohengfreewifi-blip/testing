@@ -2,6 +2,8 @@ import Foundation
 
 enum Engine: String, Codable {
     case mvmz, rgss, flash, html5
+    // Added later. Never rename or remove cases: Engine is persisted in library.json.
+    case godot, unity, construct, renpy, tyrano
 
     var label: String {
         switch self {
@@ -9,6 +11,11 @@ enum Engine: String, Codable {
         case .rgss: return "XP / VX / Ace"
         case .flash: return "Flash"
         case .html5: return "HTML5"
+        case .godot: return "Godot"
+        case .unity: return "Unity WebGL"
+        case .construct: return "Construct"
+        case .renpy: return "Ren'Py"
+        case .tyrano: return "TyranoScript"
         }
     }
     var icon: String {
@@ -17,6 +24,11 @@ enum Engine: String, Codable {
         case .rgss: return "cpu"
         case .flash: return "bolt.fill"
         case .html5: return "globe"
+        case .godot: return "cube.fill"
+        case .unity: return "square.stack.3d.up.fill"
+        case .construct: return "hammer.fill"
+        case .renpy: return "text.book.closed.fill"
+        case .tyrano: return "book.fill"
         }
     }
 }

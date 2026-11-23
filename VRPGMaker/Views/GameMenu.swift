@@ -39,11 +39,12 @@ struct ControlsView: View {
         List {
             Section("On-screen pad") {
                 Toggle("Joystick instead of D-pad", isOn: $session.layout.joystick)
+                Toggle("Vibrate on press", isOn: $session.layout.haptics)
                 HStack {
                     Text("Opacity")
                     Slider(value: $session.layout.opacity, in: 0.2...1)
                 }
-                Button("Edit layout (move, resize, add buttons)") {
+                Button("Edit layout (move, resize, sticky buttons, more)") {
                     session.padVisible = true
                     session.editingLayout = true
                 }

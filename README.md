@@ -1,6 +1,6 @@
 # V-RPGMaker
 
-Player for your own RPG Maker MV/MZ, Flash (Ruffle) and HTML5 projects on iOS.
+Player for your own RPG Maker MV/MZ, Flash (Ruffle), HTML5, Godot, Unity WebGL, Construct, Ren'Py and TyranoScript web projects on iOS.
 
 ## Build the IPA from Windows
 1. Install Git (https://git-scm.com) and GitHub CLI (https://cli.github.com).
@@ -13,8 +13,13 @@ Player for your own RPG Maker MV/MZ, Flash (Ruffle) and HTML5 projects on iOS.
 (Optional for Flash: `npm i @ruffle-rs/ruffle` and copy its contents into VRPGMaker/Resources/ruffle.)
 
 ## Status
-- MV/MZ, HTML5, Flash (Ruffle), saves import/export, cheats, remappable on-screen pad, controller support
+- MV/MZ, HTML5, Godot / Unity WebGL / Construct / Ren'Py / Tyrano web exports (auto-detected), Flash (Ruffle), saves import/export, cheats, remappable on-screen pad, controller support
 - XP/VX/Ace (native RGSS): not included. Games are detected, but opening one shows a notice.
+- Web-engine notes: export for the Web and pick the folder that holds `index.html` (a parent folder works too, one level down).
+  Unity `.br` / `.gz` builds are decoded by the app. Godot 4 threaded builds need cross-origin isolation (enabled for Godot games,
+  untested), so prefer Godot's single-thread export. Saves/cheats are MV/MZ only; other engines use their own save systems
+  (stored per game in its own web storage).
+- Not verified on device: these engines are detected from files and run through the same `vrpg://` pipeline as HTML5.
 
 ## Credits
 The 🎮 cheat button opens the **RPG Maker MV/MZ Cheat UI** plugin by paramonos (MIT license),

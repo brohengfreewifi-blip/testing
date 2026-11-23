@@ -82,7 +82,7 @@ final class GameLibrary: ObservableObject {
         try FileManager.default.copyItem(at: src, to: dst)
         guard let d = detect(in: dst, fallbackTitle: src.lastPathComponent) else {
             try? FileManager.default.removeItem(at: dst)
-            throw ImportError(msg: "No RPG Maker, Flash or HTML5 project found in that folder. Pick the folder that contains index.html, Game.ini or a .swf file.")
+            throw ImportError(msg: "No supported project found in that folder. Pick the folder that contains index.html (RPG Maker MV/MZ, HTML5, Godot, Unity WebGL, Construct, Ren'Py or Tyrano web exports), Game.ini or a .swf file.")
         }
         return Game(id: id, title: d.title, engine: d.engine, folderName: id.uuidString,
                     entry: d.entry, isMZ: d.isMZ, dateAdded: Date())
@@ -112,21 +112,11 @@ final class GameLibrary: ObservableObject {
 
     nonisolated private static func detect(in dir: URL, fallbackTitle: String) -> Detected? {
         let fm = FileManager.default
-        func exists(_ p: String) -> Bool { fm.fileExists(atPath: dir.appendingPathComponent(p).path) }
 
         for sub in ["", "www/"] {
-            if exists(sub + "index.html") {
-                let title = htmlTitle(dir.appendingPathComponent(sub + "index.html")) ?? fallbackTitle
-                if exists(sub + "js/rmmz_core.js") {
-                    return Detected(engine: .mvmz, entry: sub + "index.html", isMZ: true, title: title)
-                }
-                if exists(sub + "js/rpg_core.js") {
-                    return Detected(engine: .mvmz, entry: sub + "index.html", isMZ: false, title: title)
-                }
-                return Detected(engine: .html5, entry: sub + "index.html", isMZ: false, title: title)
-            }
+            if let d = detectWeb(in: dir, sub: sub, fallbackTitle: fallbackTitle) { return d }
         }
-        if exists("Game.ini") {
+        if fm.fileExists(atPath: dir.appendingPathComponent("Game.ini").path) {
             var title = fallbackTitle
             if let ini = try? String(contentsOf: dir.appendingPathComponent("Game.ini"), encoding: .utf8) {
                 for line in ini.split(whereSeparator: \.isNewline) where line.lowercased().hasPrefix("title=") {
@@ -145,7 +135,55 @@ final class GameLibrary: ObservableObject {
                 }
             }
         }
+        // Last resort: the user picked a parent folder, so look one level down (Name/index.html, Name/www/index.html).
+        let kids = (try? fm.contentsOfDirectory(atPath: dir.path))?.sorted() ?? []
+        for name in kids where !name.hasPrefix(".") && name != "__MACOSX" {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: dir.appendingPathComponent(name).path, isDirectory: &isDir), isDir.boolValue else { continue }
+            for sub in ["\(name)/", "\(name)/www/"] {
+                if let d = detectWeb(in: dir, sub: sub, fallbackTitle: fallbackTitle) { return d }
+            }
+        }
         return nil
+    }
+
+    /// Looks for `<sub>index.html` and works out which web engine exported it.
+    nonisolated private static func detectWeb(in dir: URL, sub: String, fallbackTitle: String) -> Detected? {
+        let fm = FileManager.default
+        let indexURL = dir.appendingPathComponent(sub + "index.html")
+        guard fm.fileExists(atPath: indexURL.path) else { return nil }
+        let entry = sub + "index.html"
+        let title = htmlTitle(indexURL) ?? fallbackTitle
+        func has(_ p: String) -> Bool { fm.fileExists(atPath: dir.appendingPathComponent(sub + p).path) }
+
+        if has("js/rmmz_core.js") { return Detected(engine: .mvmz, entry: entry, isMZ: true, title: title) }
+        if has("js/rpg_core.js") { return Detected(engine: .mvmz, entry: entry, isMZ: false, title: title) }
+
+        let top = (try? fm.contentsOfDirectory(atPath: dir.appendingPathComponent(sub).path)) ?? []
+        let build = (try? fm.contentsOfDirectory(atPath: dir.appendingPathComponent(sub + "Build").path)) ?? []
+        let html = htmlSnippet(indexURL)
+        let engine = webEngine(html: html, top: top, build: build, has: has)
+        return Detected(engine: engine, entry: entry, isMZ: false, title: title)
+    }
+
+    /// Pure classifier: `html` is the lowercased head of index.html, `top` / `build` are directory listings.
+    nonisolated private static func webEngine(html: String, top: [String], build: [String],
+                                              has: (String) -> Bool) -> Engine {
+        if has("tyrano/tyrano.js") || has("tyrano") || html.contains("tyrano") { return .tyrano }
+        if build.contains(where: { n in
+            let l = n.lowercased()
+            return l.contains(".loader.js") || l.contains(".framework.js") || l.hasPrefix("unityloader")
+        }) || html.contains("createunityinstance") || html.contains("unityloader") { return .unity }
+        if top.contains(where: { $0.lowercased().hasSuffix(".pck") }) || html.contains("godot") { return .godot }
+        if has("c3runtime.js") || has("c2runtime.js") || has("scripts/c3runtime.js") || has("scripts/c3main.js")
+            || html.contains("c3runtime") || html.contains("c2runtime") { return .construct }
+        if has("renpy.js") || has("renpy-pre.js") || html.contains("renpy") { return .renpy }
+        return .html5
+    }
+
+    nonisolated private static func htmlSnippet(_ url: URL) -> String {
+        guard let d = try? Data(contentsOf: url, options: .mappedIfSafe) else { return "" }
+        return String(decoding: d.prefix(256 * 1024), as: UTF8.self).lowercased()
     }
 
     nonisolated private static func htmlTitle(_ url: URL) -> String? {

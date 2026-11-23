@@ -54,6 +54,22 @@ enum PadAction: String, CaseIterable, Codable, Identifiable {
         }
     }
 
+    /// Short text for an on-screen button bound to this action.
+    var shortLabel: String {
+        switch self {
+        case .up: return "Up"
+        case .down: return "Down"
+        case .left: return "Left"
+        case .right: return "Right"
+        case .ok: return "A"
+        case .cancel: return "B"
+        case .shift: return "Dash"
+        case .menu: return "Menu"
+        case .pageUp: return "L"
+        case .pageDown: return "R"
+        }
+    }
+
     var defaultKey: String {
         switch self {
         case .up: return "Up"
