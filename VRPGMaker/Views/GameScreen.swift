@@ -57,8 +57,8 @@ struct GameScreen: View {
                 .presentationDetents([.medium, .large])
         }
         .onChange(of: session.editingLayout) { _, editing in if editing { showMenu = false } }
-        .onAppear { session.startControllers() }
-        .onDisappear { session.stop() }
+        .onAppear { session.startControllers(); GameEnvironment.enter() }
+        .onDisappear { session.stop(); GameEnvironment.exit() }
     }
 }
 

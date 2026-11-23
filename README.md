@@ -21,6 +21,8 @@ Player for your own RPG Maker MV/MZ, Flash (Ruffle), HTML5, Godot, Unity WebGL, 
   (stored per game in its own web storage).
 - Not verified on device: these engines are detected from files and run through the same `vrpg://` pipeline as HTML5.
 
+- Settings tab: appearance, keep screen on, lock games to landscape, default on-screen pad, licenses.
+
 ## Credits
 The 🎮 cheat button opens the **RPG Maker MV/MZ Cheat UI** plugin by paramonos (MIT license),
 bundled unmodified from release v2.2.0: https://github.com/paramonos/RPG-Maker-MV-MZ-Cheat-UI-Plugin

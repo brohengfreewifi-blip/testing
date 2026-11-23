@@ -82,7 +82,7 @@ struct PadLayout: Codable, Equatable {
             PadElement(id: "menu", kind: .action, value: PadAction.menu.rawValue, label: "Menu", size: 46, visible: true,
                        portrait: [0.76, 0.72], landscape: [0.81, 0.62]),
             cheatElement,
-        ], opacity: 0.65, joystick: false)
+        ], opacity: AppSettings.padOpacity, joystick: AppSettings.padJoystick, haptics: AppSettings.padHaptics)
     }
 
     // MARK: Quick adjustments

@@ -18,7 +18,9 @@ An iOS 17+ SwiftUI app (Swift 5 mode, bundle id `com.vrpgmaker.player`) that imp
 
 ```
 VRPGMaker/
-  App/VRPGMakerApp.swift        entry point, injects GameLibrary, forces dark mode
+  App/VRPGMakerApp.swift        entry point, Games/Settings tabs, injects GameLibrary, appearance (default dark)
+  App/AppSettings.swift         UserDefaults keys + defaults, AppDelegate (orientation mask), GameEnvironment (keep awake, landscape lock)
+  Views/SettingsView.swift      Settings tab + licenses screen
   Models/Game.swift             Engine enum (mvmz, rgss, flash, html5, godot, unity, construct, renpy, tyrano) + Game struct (Codable)
   Models/GameLibrary.swift      import, engine detection, persistence, removal
   Web/VRPGSchemeHandler.swift   serves vrpg://game | ruffle | cheat, Range support, SWF host page

@@ -81,11 +81,28 @@ final class GameLibrary: ObservableObject {
         let dst = gamesDir.appendingPathComponent(id.uuidString, isDirectory: true)
         try FileManager.default.copyItem(at: src, to: dst)
         guard let d = detect(in: dst, fallbackTitle: src.lastPathComponent) else {
+            let isUnityDesktop = looksLikeUnityDesktop(dst)
             try? FileManager.default.removeItem(at: dst)
+            if isUnityDesktop {
+                throw ImportError(msg: "This is a Windows/desktop Unity build (UnityPlayer.dll, *_Data, .exe). iOS cannot run those. Only Unity WebGL exports (a Build folder with index.html) work. To play this game on iPhone, stream it from a PC (Steam Link, Moonlight, Parsec).")
+            }
             throw ImportError(msg: "No supported project found in that folder. Pick the folder that contains index.html (RPG Maker MV/MZ, HTML5, Godot, Unity WebGL, Construct, Ren'Py or Tyrano web exports), Game.ini or a .swf file.")
         }
         return Game(id: id, title: d.title, engine: d.engine, folderName: id.uuidString,
                     entry: d.entry, isMZ: d.isMZ, dateAdded: Date())
+    }
+
+    /// Desktop Unity player layout: UnityPlayer.dll / MonoBleedingEdge / <Name>_Data (also one folder down).
+    nonisolated private static func looksLikeUnityDesktop(_ dir: URL) -> Bool {
+        let fm = FileManager.default
+        func check(_ d: URL) -> Bool {
+            let names = (try? fm.contentsOfDirectory(atPath: d.path)) ?? []
+            return names.contains { $0.lowercased() == "unityplayer.dll" || $0 == "MonoBleedingEdge" }
+                || names.contains { $0.hasSuffix("_Data") }
+        }
+        if check(dir) { return true }
+        let kids = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        return kids.contains { check(dir.appendingPathComponent($0)) }
     }
 
     nonisolated private static func copySingleFile(_ src: URL) throws -> Game {
