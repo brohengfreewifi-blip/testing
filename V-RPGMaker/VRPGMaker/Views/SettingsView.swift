@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.padOpacityKey) private var padOpacity = 0.65
     @AppStorage(AppSettings.padJoystickKey) private var padJoystick = false
     @AppStorage(AppSettings.padHapticsKey) private var padHaptics = true
+    @AppStorage(AppSettings.autoKeyboardKey) private var autoKeyboard = true
 
     private var version: String {
         let i = Bundle.main.infoDictionary
@@ -23,9 +24,14 @@ struct SettingsView: View {
                         ForEach(AppSettings.Appearance.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                 }
-                Section("Gameplay") {
+                Section {
                     Toggle("Keep screen on", isOn: $keepScreenOn)
+                    Toggle("Auto-show keyboard", isOn: $autoKeyboard)
                     Toggle("Lock games to landscape", isOn: $lockLandscape)
+                } header: {
+                    Text("Gameplay")
+                } footer: {
+                    Text("Auto-show keyboard opens a typing bar above the keyboard whenever a game or the cheat window focuses a text field. The keyboard button in a game opens it on demand.")
                 }
                 Section {
                     Toggle("Joystick instead of D-pad", isOn: $padJoystick)

@@ -20,6 +20,12 @@ struct GameMenu: View {
                     }
                     NavigationLink("Controls") { ControlsView(session: session) }
                     Toggle("On-screen gamepad", isOn: $session.padVisible)
+                    Button("Show keyboard") {
+                        dismiss()
+                        // Let the sheet finish closing, otherwise the typing field cannot take focus.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { session.showKeyboard() }
+                    }
+                    Toggle("Auto-show keyboard", isOn: $session.autoKeyboard)
                     Button("Reload game") { session.webView?.reload(); dismiss() }
                 }
                 Section {

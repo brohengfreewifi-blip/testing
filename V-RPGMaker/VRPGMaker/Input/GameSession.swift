@@ -14,6 +14,15 @@ final class GameSession: ObservableObject {
     @Published var layout: PadLayout { didSet { layout.save(for: game.id) } }
     @Published var editingLayout = false
     @Published var cheatError: String?
+    /// Typing bar (see KeyboardBar). `keyboardNonce` changes every time it should re-read the focused field.
+    @Published var keyboardVisible = false
+    @Published var keyboardNonce = 0
+    @Published var autoKeyboard: Bool {
+        didSet {
+            UserDefaults.standard.set(autoKeyboard, forKey: AppSettings.autoKeyboardKey)
+            webView?.evaluateJavaScript("window.__vkSetAuto&&window.__vkSetAuto(\(autoKeyboard));", completionHandler: nil)
+        }
+    }
     private var heldKeys = Set<String>()
 
     private var held = Set<PadAction>()
@@ -22,6 +31,7 @@ final class GameSession: ObservableObject {
     init(game: Game) {
         self.game = game
         self.layout = PadLayout.load(for: game.id)
+        self.autoKeyboard = AppSettings.autoKeyboard
         var map: [PadAction: String] = [:]
         let saved = UserDefaults.standard.dictionary(forKey: bindKey) as? [String: String] ?? [:]
         for a in PadAction.allCases { map[a] = saved[a.rawValue] ?? a.defaultKey }
@@ -58,6 +68,28 @@ final class GameSession: ObservableObject {
         let k = KeyChoice.named(name)
         let js = "window.__vk&&window.__vk('\(down ? "keydown" : "keyup")','\(k.key)','\(k.code)',\(k.keyCode));"
         webView?.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    // MARK: Keyboard
+
+    func showKeyboard() { keyboardNonce += 1; keyboardVisible = true }
+    func hideKeyboard() { keyboardVisible = false }
+    func toggleKeyboard() { keyboardVisible ? hideKeyboard() : showKeyboard() }
+
+    /// Picks the focused text field in the page (if any), moves its caret to the end and returns its text.
+    func keyboardBegin() async -> String {
+        let r = await run("return window.__vkBegin ? window.__vkBegin() : '';")
+        guard let s = r as? String, !s.hasPrefix("ERROR: ") else { return "" }
+        return s
+    }
+
+    /// Deletes `delete` characters before the caret, then types `insert`, then optionally presses a
+    /// special key ("Enter", "Escape", "Tab"). Calls are dispatched in order, so fast typing stays in order.
+    func keyboardSend(delete: Int, insert: String, special: String = "") {
+        guard delete > 0 || !insert.isEmpty || !special.isEmpty else { return }
+        webView?.callAsyncJavaScript("window.__vkType && window.__vkType(d, s, k);",
+                                     arguments: ["d": delete, "s": insert, "k": special],
+                                     in: nil, in: .page, completionHandler: nil)
     }
 
     /// Opens / closes the Cheat UI plugin window (paramonos). Loads it on first use.
@@ -158,6 +190,7 @@ final class GameSession: ObservableObject {
     }
 
     func stop() {
+        hideKeyboard()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }

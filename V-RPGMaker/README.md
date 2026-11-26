@@ -21,6 +21,7 @@ Player for your own RPG Maker MV/MZ, Flash (Ruffle), HTML5, Godot, Unity WebGL, 
   (stored per game in its own web storage).
 - Not verified on device: these engines are detected from files and run through the same `vrpg://` pipeline as HTML5.
 
+- Keyboard: a keyboard button in every game opens a typing bar above the iOS keyboard (text goes into the focused field, or is sent as key events). "Auto-show keyboard" (Settings or game menu) opens it whenever a text field is focused, e.g. in the cheat window. Not verified on device.
 - Settings tab: appearance, keep screen on, lock games to landscape, default on-screen pad, licenses.
 
 ## Credits

@@ -15,6 +15,7 @@ struct GameScreen: View {
 
             if session.editingLayout || (session.padVisible && !session.controllerConnected) {
                 PadOverlay(session: session)
+                    .ignoresSafeArea(.keyboard)
             }
 
             // Same control, same corner, on every engine.
@@ -28,6 +29,14 @@ struct GameScreen: View {
                                 .foregroundStyle(.white.opacity(0.65))
                                 .shadow(radius: 3)
                         }
+                        // Typing bar for text fields (cheat window, name entry, Ren'Py / Tyrano input...).
+                        Button { session.toggleKeyboard() } label: {
+                            Image(systemName: session.keyboardVisible ? "keyboard.chevron.compact.down" : "keyboard")
+                                .font(.system(size: 30))
+                                .foregroundStyle(.white.opacity(0.65))
+                                .shadow(radius: 3)
+                        }
+                        .accessibilityLabel(session.keyboardVisible ? "Hide keyboard" : "Show keyboard")
                         // Hide / show the on-screen controls. Not needed while a controller is
                         // connected (the pad is already hidden) or while editing the layout.
                         if !session.controllerConnected && !session.editingLayout {
@@ -44,6 +53,14 @@ struct GameScreen: View {
                 Spacer()
             }
             .padding(12)
+            .ignoresSafeArea(.keyboard)
+
+            if session.keyboardVisible {
+                VStack {
+                    Spacer()
+                    KeyboardBar(session: session)
+                }
+            }
         }
         .alert("Cheat UI", isPresented: Binding(
             get: { session.cheatError != nil },

@@ -9,6 +9,7 @@ enum AppSettings {
     static let padOpacityKey = "set.padOpacity"
     static let padJoystickKey = "set.padJoystick"
     static let padHapticsKey = "set.padHaptics"
+    static let autoKeyboardKey = "set.autoKeyboard"
 
     enum Appearance: String, CaseIterable, Identifiable {
         case auto, light, dark
@@ -38,6 +39,7 @@ enum AppSettings {
             padOpacityKey: 0.65,
             padJoystickKey: false,
             padHapticsKey: true,
+            autoKeyboardKey: true,
         ])
     }
 
@@ -47,6 +49,9 @@ enum AppSettings {
         return v == 0 ? 0.65 : min(max(v, 0.2), 1)
     }
     static var padJoystick: Bool { UserDefaults.standard.bool(forKey: padJoystickKey) }
+    static var autoKeyboard: Bool {
+        UserDefaults.standard.object(forKey: autoKeyboardKey) as? Bool ?? true
+    }
     static var padHaptics: Bool {
         UserDefaults.standard.object(forKey: padHapticsKey) as? Bool ?? true
     }
